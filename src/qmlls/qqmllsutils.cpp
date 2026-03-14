@@ -129,6 +129,71 @@ static std::optional<Location> findJavaScriptDeclarationInSource(const QString &
     return {};
 }
 
+static QString resolvedScopeFilePath(const QQmlJSScope::ConstPtr &scope, const DomItem &item)
+{
+    QString relativeFilePath;
+    if (scope) {
+        relativeFilePath = scope->filePath();
+        if (!relativeFilePath.isEmpty()) {
+            const QString canonicalPath = QFileInfo(relativeFilePath).canonicalFilePath();
+            if (!canonicalPath.isEmpty())
+                return canonicalPath;
+            if (QFileInfo::exists(relativeFilePath))
+                return relativeFilePath;
+        }
+    }
+
+    const DomItem scopeFile = goToFileOfScope(item, scope);
+    if (scopeFile)
+        return scopeFile.canonicalFilePath();
+
+    if (relativeFilePath.isEmpty())
+        return {};
+
+    const QString baseName = QFileInfo(relativeFilePath).fileName();
+    const DomItem qmlFiles = item.environment().field(Fields::qmlFileWithPath);
+    const auto keys = qmlFiles.keys();
+    for (const QString &key : keys) {
+        if (QFileInfo(key).fileName() == baseName)
+            return key;
+    }
+
+    return {};
+}
+
+static std::optional<Location> findQmltypesMemberDefinitionInSource(
+        const QString &filePath, const QStringList &blockKeywords, const QString &memberName)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+
+    const QString code = QString::fromUtf8(file.readAll());
+    const QStringList lines = code.split(u'\n');
+    const QString quotedName = u"\"%1\""_s.arg(memberName);
+
+    for (int i = 0; i < lines.size(); ++i) {
+        const QString &line = lines.at(i);
+        const int nameIndex = line.indexOf(quotedName);
+        if (nameIndex < 0)
+            continue;
+
+        for (int j = i; j >= qMax(0, i - 8); --j) {
+            const QString &blockLine = lines.at(j);
+            const bool matchesKeyword =
+                    std::any_of(blockKeywords.begin(), blockKeywords.end(),
+                                [&blockLine](const QString &keyword) {
+                                    return blockLine.contains(keyword);
+                                });
+            if (matchesKeyword) {
+                return Location::from(filePath, code, i + 1, nameIndex + 2, memberName.size());
+            }
+        }
+    }
+
+    return {};
+}
+
 static std::optional<Location> findImportedJavaScriptMemberDefinition(
         const DomItem &item, const QString &aliasName, const QString &memberName)
 {
@@ -611,6 +676,29 @@ static QString canonicalFilePathOfScope(const QQmlJSScope::ConstPtr &scope)
     return canonicalFilePath.isEmpty() ? filePath : canonicalFilePath;
 }
 
+static bool scopeDefinedInQmltypes(const QQmlJSScope::ConstPtr &scope)
+{
+    return !scope.isNull() && scope->filePath().endsWith(u".qmltypes"_s);
+}
+
+static QQmlJSScope::ConstPtr definingScopeForMethod(const QQmlJSScope::ConstPtr &scope,
+                                                    const QString &name)
+{
+    QQmlJSScope::ConstPtr definingScope = scope;
+    while (definingScope && !definingScope->hasOwnMethod(name))
+        definingScope = definingScope->baseType();
+    return definingScope;
+}
+
+static QQmlJSScope::ConstPtr definingScopeForProperty(const QQmlJSScope::ConstPtr &scope,
+                                                      const QString &name)
+{
+    QQmlJSScope::ConstPtr definingScope = scope;
+    while (definingScope && !definingScope->hasOwnProperty(name))
+        definingScope = definingScope->baseType();
+    return definingScope;
+}
+
 static bool scopesMatch(const QQmlJSScope::ConstPtr &target, const QQmlJSScope::ConstPtr &current)
 {
     if (target == current)
@@ -699,6 +787,78 @@ static std::optional<Location> locationFromModuleExport(const DomItem &exportIte
         return {};
 
     return locationAtStartOfFile(exportSourcePath);
+}
+
+static QString sourceFilePathFromModuleExport(const DomItem &exportItem)
+{
+    if (!exportItem || exportItem.internalKind() != DomType::Export)
+        return {};
+
+    const DomItem exportSource = exportItem.field(Fields::exportSource).get();
+    if (exportSource) {
+        const QString exportSourcePath = exportSource.canonicalFilePath();
+        if (!exportSourcePath.isEmpty())
+            return exportSourcePath;
+    }
+
+    const DomItem typeDefinition = exportItem.field(Fields::type).get();
+    if (!typeDefinition)
+        return {};
+
+    const QString typeFilePath = typeDefinition.canonicalFilePath();
+    if (!typeFilePath.isEmpty())
+        return typeFilePath;
+
+    return {};
+}
+
+static QString moduleExportSourceFilePath(const DomItem &item, const QString &moduleName,
+                                          const QString &typeName)
+{
+    if (moduleName.isEmpty() || typeName.isEmpty())
+        return {};
+
+    const auto env = item.environment().ownerAs<DomEnvironment>();
+    if (!env)
+        return {};
+
+    const auto tryModuleVersion = [&](int majorVersion, int minorVersion) -> QString {
+        const auto moduleIndex =
+                env->moduleIndexWithUri(item.environment(), moduleName, majorVersion, EnvLookup::Normal);
+        if (!moduleIndex)
+            return {};
+
+        const DomItem moduleIndexItem = item.environment().copy(moduleIndex);
+        const auto exports = moduleIndex->exportsWithNameAndMinorVersion(moduleIndexItem, typeName,
+                                                                         minorVersion);
+        for (const DomItem &exportItem : exports) {
+            if (const QString path = sourceFilePathFromModuleExport(exportItem); !path.isEmpty())
+                return path;
+        }
+
+        return {};
+    };
+
+    bool matchedImport = false;
+    const DomItem imports = item.fileObject().field(Fields::imports);
+    for (int i = 0; i < imports.indexes(); ++i) {
+        const auto import = imports[i].as<Import>();
+        if (!import || import->uri.isDirectory() || import->uri.moduleUri() != moduleName)
+            continue;
+
+        matchedImport = true;
+        const int majorVersion = import->version.majorVersion < 0 ? Version::Latest
+                                                                  : import->version.majorVersion;
+        const int minorVersion = import->version.minorVersion < 0 ? Version::Latest
+                                                                  : import->version.minorVersion;
+        if (const QString path = tryModuleVersion(majorVersion, minorVersion); !path.isEmpty())
+            return path;
+    }
+
+    if (!matchedImport)
+        return {};
+
+    return tryModuleVersion(Version::Latest, Version::Latest);
 }
 
 static std::optional<Location> findModuleExportDefinitionOf(const DomItem &item,
@@ -1927,6 +2087,7 @@ resolveSignalOrPropertyExpressionType(const QString &name, const QQmlJSScope::Co
         }
         Q_UNREACHABLE_RETURN({});
     case PropertyChangedHandlerIdentifier:
+    case PropertyChangedSignalIdentifier:
         switch (options) {
         case ResolveOwnerType:
             return ExpressionType{ name,
@@ -1938,7 +2099,6 @@ resolveSignalOrPropertyExpressionType(const QString &name, const QQmlJSScope::Co
         }
         Q_UNREACHABLE_RETURN({});
     case SignalHandlerIdentifier:
-    case PropertyChangedSignalIdentifier:
     case SignalIdentifier:
     case MethodIdentifier:
         switch (options) {
@@ -2284,6 +2444,40 @@ findMethodDefinitionOf(const DomItem &file, QQmlJS::SourceLocation location, con
     return {};
 }
 
+static std::optional<Location> locationFromMetaMethod(const QQmlJSScope::ConstPtr &scope,
+                                                      const QString &name, const DomItem &item)
+{
+    if (!scope)
+        return {};
+
+    QString filePath = resolvedScopeFilePath(scope, item);
+    if (filePath.isEmpty())
+        filePath = moduleExportSourceFilePath(item, scope->moduleName(), scope->internalName());
+    if (filePath.isEmpty())
+        return {};
+
+    const auto methods = scope->methods(name);
+    for (const auto &method : methods) {
+        const bool impreciseLocation = method.sourceLocation().startColumn <= 0
+                || method.sourceLocation().length <= 0;
+        if (method.sourceLocation().isValid() && !impreciseLocation) {
+            if (const auto location = Location::tryFrom(filePath, method.sourceLocation(), item))
+                return location;
+        }
+
+        if (!filePath.endsWith(u".qmltypes"_s))
+            continue;
+
+        const QStringList blockKeywords =
+                method.methodType() == QQmlJSMetaMethodType::Signal ? QStringList{ u"Signal {"_s }
+                                                                     : QStringList{ u"Method {"_s };
+        if (const auto location = findQmltypesMemberDefinitionInSource(filePath, blockKeywords, name))
+            return location;
+    }
+
+    return {};
+}
+
 static std::optional<Location>
 findPropertyDefinitionOf(const DomItem &file, QQmlJS::SourceLocation propertyDefinitionLocation,
                          const QString &name)
@@ -2300,6 +2494,32 @@ findPropertyDefinitionOf(const DomItem &file, QQmlJS::SourceLocation propertyDef
     if (auto it = regions.constFind(IdentifierRegion); it != regions.constEnd()) {
         return Location::tryFrom(propertyDefinition.canonicalFilePath(), *it, file);
     }
+
+    return {};
+}
+
+static std::optional<Location> locationFromMetaProperty(const QQmlJSScope::ConstPtr &scope,
+                                                        const QString &name, const DomItem &item)
+{
+    if (!scope || !scope->hasProperty(name))
+        return {};
+
+    QString filePath = resolvedScopeFilePath(scope, item);
+    if (filePath.isEmpty())
+        filePath = moduleExportSourceFilePath(item, scope->moduleName(), scope->internalName());
+    if (filePath.isEmpty())
+        return {};
+
+    const auto property = scope->property(name);
+    const bool impreciseLocation =
+            property.sourceLocation().startColumn <= 0 || property.sourceLocation().length <= 0;
+    if (property.sourceLocation().isValid() && !impreciseLocation) {
+        if (const auto location = Location::tryFrom(filePath, property.sourceLocation(), item))
+            return location;
+    }
+
+    if (filePath.endsWith(u".qmltypes"_s))
+        return findQmltypesMemberDefinitionInSource(filePath, QStringList{ u"Property {"_s }, name);
 
     return {};
 }
@@ -2348,20 +2568,78 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
     }
 
     case PropertyIdentifier: {
-        const DomItem ownerFile = goToFileOfScope(item, resolvedExpression->semanticScope);
-        const QQmlJS::SourceLocation ownerLocation =
-                resolvedExpression->semanticScope->sourceLocation();
-        return findPropertyDefinitionOf(ownerFile, ownerLocation, *resolvedExpression->name);
+        const auto definingScope =
+                definingScopeForProperty(resolvedExpression->semanticScope, *resolvedExpression->name);
+        if (scopeDefinedInQmltypes(definingScope)) {
+            if (const auto location = locationFromMetaProperty(definingScope,
+                                                               *resolvedExpression->name, item)) {
+                return location;
+            }
+        }
+        const DomItem ownerFile = goToFileOfScope(item, definingScope);
+        const QQmlJS::SourceLocation ownerLocation = definingScope ? definingScope->sourceLocation()
+                                                                  : QQmlJS::SourceLocation{};
+        if (const auto location =
+                    findPropertyDefinitionOf(ownerFile, ownerLocation, *resolvedExpression->name)) {
+            return location;
+        }
+        return locationFromMetaProperty(definingScope, *resolvedExpression->name, item);
     }
-    case PropertyChangedSignalIdentifier:
-    case PropertyChangedHandlerIdentifier:
+    case PropertyChangedSignalIdentifier: {
+        const auto propertyName =
+                QQmlSignalNames::changedSignalNameToPropertyName(*resolvedExpression->name);
+        if (!propertyName)
+            return {};
+        const auto definingScope =
+                definingScopeForProperty(resolvedExpression->semanticScope, *propertyName);
+        if (scopeDefinedInQmltypes(definingScope)) {
+            if (const auto location = locationFromMetaProperty(definingScope, *propertyName, item))
+                return location;
+        }
+        const DomItem ownerFile = goToFileOfScope(item, definingScope);
+        const QQmlJS::SourceLocation ownerLocation = definingScope ? definingScope->sourceLocation()
+                                                                  : QQmlJS::SourceLocation{};
+        if (const auto location = findPropertyDefinitionOf(ownerFile, ownerLocation, *propertyName))
+            return location;
+        return locationFromMetaProperty(definingScope, *propertyName, item);
+    }
+    case PropertyChangedHandlerIdentifier: {
+        const auto propertyName =
+                QQmlSignalNames::changedHandlerNameToPropertyName(*resolvedExpression->name);
+        if (!propertyName)
+            return {};
+        const auto definingScope =
+                definingScopeForProperty(resolvedExpression->semanticScope, *propertyName);
+        if (scopeDefinedInQmltypes(definingScope)) {
+            if (const auto location = locationFromMetaProperty(definingScope, *propertyName, item))
+                return location;
+        }
+        const DomItem ownerFile = goToFileOfScope(item, definingScope);
+        const QQmlJS::SourceLocation ownerLocation = definingScope ? definingScope->sourceLocation()
+                                                                  : QQmlJS::SourceLocation{};
+        if (const auto location = findPropertyDefinitionOf(ownerFile, ownerLocation, *propertyName))
+            return location;
+        return locationFromMetaProperty(definingScope, *propertyName, item);
+    }
     case SignalIdentifier:
     case SignalHandlerIdentifier:
     case MethodIdentifier: {
-        const DomItem ownerFile = goToFileOfScope(item, resolvedExpression->semanticScope);
-        const QQmlJS::SourceLocation ownerLocation =
-                resolvedExpression->semanticScope->sourceLocation();
-        return findMethodDefinitionOf(ownerFile, ownerLocation, *resolvedExpression->name);
+        const auto definingScope =
+                definingScopeForMethod(resolvedExpression->semanticScope, *resolvedExpression->name);
+        if (scopeDefinedInQmltypes(definingScope)) {
+            if (const auto location = locationFromMetaMethod(definingScope,
+                                                             *resolvedExpression->name, item)) {
+                return location;
+            }
+        }
+        const DomItem ownerFile = goToFileOfScope(item, definingScope);
+        const QQmlJS::SourceLocation ownerLocation = definingScope ? definingScope->sourceLocation()
+                                                                  : QQmlJS::SourceLocation{};
+        if (const auto location =
+                    findMethodDefinitionOf(ownerFile, ownerLocation, *resolvedExpression->name)) {
+            return location;
+        }
+        return locationFromMetaMethod(definingScope, *resolvedExpression->name, item);
     }
     case QmlObjectIdIdentifier: {
         DomItem qmlObject = QQmlLSUtils::sourceLocationToDomItem(
@@ -2739,12 +3017,25 @@ std::optional<Location> Location::tryFrom(const QString &fileName,
                                           const QQmlJS::Dom::DomItem &someItem)
 {
     auto qmlFile = someItem.goToFile(fileName).ownerAs<QQmlJS::Dom::QmlFile>();
-    if (!qmlFile) {
-        qDebug() << "Could not find file" << fileName << "in the dom!";
+    if (qmlFile) {
+        return Location{ fileName, sourceLocation,
+                         textRowAndColumnFrom(qmlFile->code(), sourceLocation.end()) };
+    }
+
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qDebug() << "Could not find file" << fileName << "in the dom or on disk!";
         return {};
     }
-    return Location{ fileName, sourceLocation,
-                     textRowAndColumnFrom(qmlFile->code(), sourceLocation.end()) };
+
+    const QString code = QString::fromUtf8(file.readAll());
+    if (sourceLocation.startLine > 0) {
+        const qsizetype startColumn = sourceLocation.startColumn > 0 ? sourceLocation.startColumn : 1;
+        const qsizetype length = sourceLocation.startColumn > 0 ? sourceLocation.length : 0;
+        return Location::from(fileName, code, sourceLocation.startLine, startColumn, length);
+    }
+
+    return Location::from(fileName, code, 1, 1, 0);
 }
 
 Location Location::from(const QString &fileName, const QQmlJS::SourceLocation &sourceLocation, const QString &code)

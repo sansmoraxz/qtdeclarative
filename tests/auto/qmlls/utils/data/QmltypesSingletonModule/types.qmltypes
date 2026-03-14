@@ -1,0 +1,33 @@
+import QtQuick.tooling 1.2
+
+Module {
+    Component {
+        file: "types.qmltypes"
+        name: "MetaSingleton"
+        accessSemantics: "reference"
+        prototype: "QObject"
+        exports: ["QmltypesSingletonModule/MetaSingleton 1.0"]
+        isCreatable: false
+        isSingleton: true
+        Property {
+            name: "version"
+            type: "QString"
+            read: "version"
+            notify: "versionChanged"
+            lineNumber: 14
+            isReadonly: true
+        }
+        Signal { name: "versionChanged"; lineNumber: 19 }
+        Signal {
+            name: "reloadFailed"
+            lineNumber: 21
+            Parameter { name: "errorString"; type: "QString" }
+        }
+        Method {
+            name: "env"
+            type: "QString"
+            lineNumber: 26
+            Parameter { name: "variable"; type: "QString" }
+        }
+    }
+}

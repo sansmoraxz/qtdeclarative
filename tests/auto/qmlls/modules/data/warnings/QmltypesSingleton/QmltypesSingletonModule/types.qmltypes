@@ -1,0 +1,19 @@
+import QtQuick.tooling 1.2
+
+Module {
+    Component {
+        file: "types.qmltypes"
+        name: "MetaSingleton"
+        accessSemantics: "reference"
+        prototype: "QObject"
+        exports: ["QmltypesSingletonModule/MetaSingleton 1.0"]
+        isCreatable: false
+        isSingleton: true
+        Method {
+            name: "env"
+            type: "QString"
+            lineNumber: 13
+            Parameter { name: "variable"; type: "QString" }
+        }
+    }
+}

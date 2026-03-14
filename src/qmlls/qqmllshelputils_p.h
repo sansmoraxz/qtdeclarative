@@ -36,6 +36,8 @@ public:
             const QQmlJS::Dom::DomItem &file, QLspSpecification::Position position);
 
 private:
+    [[nodiscard]] std::optional<QByteArray> sourceDocumentationForPropertyIdentifier(
+            const QQmlLSUtils::ExpressionType &expr) const;
     [[nodiscard]] std::optional<QByteArray> sourceDocumentationForMethodIdentifier(
             const QQmlJS::Dom::DomItem &item, const QQmlLSUtils::ExpressionType &expr) const;
     [[nodiscard]] std::optional<QByteArray> sourceDocumentationForMethod(

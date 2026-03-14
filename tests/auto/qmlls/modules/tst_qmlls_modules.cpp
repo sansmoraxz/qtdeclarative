@@ -1414,6 +1414,15 @@ void tst_qmlls_modules::warnings_data()
         QTest::addRow("WithQmllsBuildIni")
                 << u"warnings/QmllsBuildIni/Main.qml"_s << noWarningsExpected;
     }
+    {
+        ExpectedWarnings expectedWarnings;
+        expectedWarnings.extraImportPaths.append(testFile("warnings/QmltypesSingleton"_L1));
+        expectedWarnings.warnings.append(
+                u"Could not compile binding for value: Function expects 1 arguments, but 0 were provided [compiler]"_s);
+
+        QTest::addRow("QmltypesSingletonMethodSignature")
+                << u"warnings/QmltypesSingleton/Main.qml"_s << expectedWarnings;
+    }
 }
 
 static QString qmllsBuildIniContent(const QString &qmlFileName, QStringList importPaths)

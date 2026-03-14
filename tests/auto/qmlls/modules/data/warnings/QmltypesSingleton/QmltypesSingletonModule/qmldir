@@ -1,0 +1,2 @@
+module QmltypesSingletonModule
+typeinfo types.qmltypes

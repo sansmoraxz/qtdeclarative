@@ -2080,10 +2080,10 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         const QString buildDir = testFile(
                 u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/build"_s);
         QTest::addRow("singletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
-                << mainQml << 6 << 38 << singletonQml << 6 << 14 << strlen("answer")
+                << mainQml << 8 << 38 << singletonQml << 8 << 14 << strlen("answer")
                 << QStringList{ buildDir };
         QTest::addRow("qualifiedSingletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
-                << mainQml << 7 << 44 << singletonQml << 6 << 14 << strlen("answer")
+                << mainQml << 9 << 44 << singletonQml << 8 << 14 << strlen("answer")
                 << QStringList{ buildDir };
     }
 
@@ -2116,6 +2116,21 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         QTest::addRow("jsImportedMethod")
                 << jsInteropQml << 6 << 31 << helperJs << 1 << 10 << strlen("answer")
                 << noExtraBuildDir;
+    }
+
+    {
+        const QString qmltypesSingletonUsages =
+                testFile(u"findDefinition/QmltypesSingletonUsages.qml"_s);
+        const QString qmltypesFile = testFile(u"QmltypesSingletonModule/types.qmltypes"_s);
+        QTest::addRow("qmltypesSingletonPropertyFromModule")
+                << qmltypesSingletonUsages << 6 << 51 << qmltypesFile << 13 << 20
+                << strlen("version") << noExtraBuildDir;
+        QTest::addRow("qmltypesSingletonPropertyChangedSignalFromModule")
+                << qmltypesSingletonUsages << 7 << 54 << qmltypesFile << 20 << 25
+                << strlen("versionChanged") << noExtraBuildDir;
+        QTest::addRow("qmltypesSingletonSignalFromModule")
+                << qmltypesSingletonUsages << 8 << 47 << qmltypesFile << 22 << 20
+                << strlen("reloadFailed") << noExtraBuildDir;
     }
 }
 
@@ -2177,6 +2192,21 @@ void tst_qmlls_utils::findDefinitionFileFromLocation_data()
     const QString file = testFile(u"Yyy.qml"_s);
     QTest::addRow("singletonFromPluginMetadata")
             << file << 78 << 33 << u"/QtCore/plugins.qmltypes"_s;
+
+    const QString qmltypesSingletonUsages =
+            testFile(u"findDefinition/QmltypesSingletonUsages.qml"_s);
+    QTest::addRow("qmltypesSingletonMethodFromModule")
+            << qmltypesSingletonUsages << 5 << 42
+            << u"/QmltypesSingletonModule/types.qmltypes"_s;
+    QTest::addRow("qmltypesSingletonPropertyFromModule")
+            << qmltypesSingletonUsages << 6 << 51
+            << u"/QmltypesSingletonModule/types.qmltypes"_s;
+    QTest::addRow("qmltypesSingletonPropertyChangedSignalFromModule")
+            << qmltypesSingletonUsages << 7 << 54
+            << u"/QmltypesSingletonModule/types.qmltypes"_s;
+    QTest::addRow("qmltypesSingletonSignalFromModule")
+            << qmltypesSingletonUsages << 8 << 47
+            << u"/QmltypesSingletonModule/types.qmltypes"_s;
 }
 
 void tst_qmlls_utils::findDefinitionFileFromLocation()
@@ -2213,6 +2243,31 @@ void tst_qmlls_utils::hoverDocumentation_data()
             << singletonUsages << 11 << 50 << expected << QStringList{};
     QTest::addRow("qualifiedSingletonMethodFromModule")
             << singletonUsages << 12 << 63 << expected << QStringList{};
+
+    const QString qmltypesSingletonUsages =
+            testFile(u"findDefinition/QmltypesSingletonUsages.qml"_s);
+    const QByteArray qmltypesExpected =
+            QByteArrayLiteral("```qml\nenv(variable: QString): QString\n```");
+    QTest::addRow("qmltypesSingletonMethodFromModule")
+            << qmltypesSingletonUsages << 5 << 42 << qmltypesExpected << QStringList{};
+    QTest::addRow("qmltypesSingletonPropertyFromModule")
+            << qmltypesSingletonUsages << 6 << 51
+            << QByteArrayLiteral("```qml\nreadonly property QString version\n```")
+            << QStringList{};
+    QTest::addRow("qmltypesSingletonPropertyChangedSignalFromModule")
+            << qmltypesSingletonUsages << 7 << 54
+            << QByteArrayLiteral("```qml\nversionChanged(): void\n```")
+            << QStringList{};
+    QTest::addRow("qmltypesSingletonSignalFromModule")
+            << qmltypesSingletonUsages << 8 << 47
+            << QByteArrayLiteral("```qml\nreloadFailed(errorString: QString): void\n```")
+            << QStringList{};
+    const QString pluginMetadataFile = testFile(u"Yyy.qml"_s);
+    QTest::addRow("singletonPropertyFromPluginMetadata")
+            << pluginMetadataFile << 78 << 51
+            << QByteArrayLiteral(
+                       "```qml\nreadonly property QQmlSystemInformation::Endian byteOrder\n```")
+            << QStringList{};
     QTest::addRow("singletonUntypedMethodFromModule")
             << singletonUsages << 13 << 56
             << QByteArrayLiteral("```qml\nlegacyAnswer(prefix)\n```") << QStringList{};
@@ -2252,9 +2307,9 @@ void tst_qmlls_utils::hoverDocumentation_data()
             testFile(u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/build"_s);
     const QByteArray symlinkedExpected = QByteArrayLiteral("```qml\nanswer(prefix)\n```");
     QTest::addRow("singletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
-            << symlinkedMainQml << 6 << 38 << symlinkedExpected << QStringList{ symlinkedBuildDir };
+            << symlinkedMainQml << 8 << 38 << symlinkedExpected << QStringList{ symlinkedBuildDir };
     QTest::addRow("qualifiedSingletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
-            << symlinkedMainQml << 7 << 44 << symlinkedExpected << QStringList{ symlinkedBuildDir };
+            << symlinkedMainQml << 9 << 44 << symlinkedExpected << QStringList{ symlinkedBuildDir };
 
 }
 

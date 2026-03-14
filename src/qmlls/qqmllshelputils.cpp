@@ -35,6 +35,102 @@ static QString markdownCodeBlock(const QString &code)
     return u"```qml\n%1\n```"_s.arg(code);
 }
 
+static bool scopeDefinedInQmltypes(const QQmlJSScope::ConstPtr &scope)
+{
+    return !scope.isNull() && scope->filePath().endsWith(u".qmltypes"_s);
+}
+
+static QQmlJSScope::ConstPtr definingScopeForMethod(const QQmlJSScope::ConstPtr &scope,
+                                                    const QString &name)
+{
+    QQmlJSScope::ConstPtr definingScope = scope;
+    while (definingScope && !definingScope->hasOwnMethod(name))
+        definingScope = definingScope->baseType();
+    return definingScope;
+}
+
+static QQmlJSScope::ConstPtr definingScopeForProperty(const QQmlJSScope::ConstPtr &scope,
+                                                      const QString &name)
+{
+    QQmlJSScope::ConstPtr definingScope = scope;
+    while (definingScope && !definingScope->hasOwnProperty(name))
+        definingScope = definingScope->baseType();
+    return definingScope;
+}
+
+static QString metaParameterSignature(const QQmlJSMetaParameter &parameter)
+{
+    QString typeName = parameter.typeName();
+    if (typeName.isEmpty() && parameter.type())
+        typeName = parameter.type()->internalName();
+
+    if (parameter.isList())
+        typeName = u"list<%1>"_s.arg(typeName);
+    else if (parameter.isPointer() && !typeName.endsWith(u'*'))
+        typeName.append(u'*');
+
+    if (parameter.name().isEmpty())
+        return typeName;
+    if (typeName.isEmpty())
+        return parameter.name();
+    return u"%1: %2"_s.arg(parameter.name(), typeName);
+}
+
+static QString metaMethodSignature(const QQmlJSMetaMethod &method)
+{
+    QStringList parameters;
+    for (const auto &parameter : method.parameters())
+        parameters.append(metaParameterSignature(parameter));
+
+    QString signature = u"%1(%2)"_s.arg(method.methodName(), parameters.join(u", "_s));
+    QString returnType = method.returnTypeName();
+    if (returnType.isEmpty() && method.returnType())
+        returnType = method.returnType()->internalName();
+    if (!returnType.isEmpty())
+        signature.append(u": "_s).append(returnType);
+
+    return signature;
+}
+
+static QString metaPropertySignature(const QQmlJSMetaProperty &property)
+{
+    QString typeName = property.typeName();
+    if (typeName.isEmpty() && property.type())
+        typeName = property.type()->internalName();
+
+    if (property.isList())
+        typeName = u"list<%1>"_s.arg(typeName);
+    else if (property.isPointer() && !typeName.endsWith(u'*'))
+        typeName.append(u'*');
+
+    QString signature;
+    if (!property.isWritable())
+        signature.append(u"readonly "_s);
+    signature.append(u"property "_s);
+    if (!typeName.isEmpty())
+        signature.append(typeName).append(u' ');
+    signature.append(property.propertyName());
+    return signature;
+}
+
+static std::optional<QString> propertyNameFromExpression(const QQmlLSUtils::ExpressionType &expr)
+{
+    if (!expr.name)
+        return std::nullopt;
+
+    switch (expr.type) {
+    case QQmlLSUtils::PropertyIdentifier:
+    case QQmlLSUtils::GroupedPropertyIdentifier:
+        return expr.name;
+    case QQmlLSUtils::PropertyChangedSignalIdentifier:
+        return QQmlSignalNames::changedSignalNameToPropertyName(*expr.name);
+    case QQmlLSUtils::PropertyChangedHandlerIdentifier:
+        return QQmlSignalNames::changedHandlerNameToPropertyName(*expr.name);
+    default:
+        return std::nullopt;
+    }
+}
+
 HelpManager::HelpManager()
 {
     const QFactoryLoader pluginLoader(QQmlLSHelpPluginInterface_iid, u"/help"_s);
@@ -103,13 +199,19 @@ HelpManager::extractDocumentationForIdentifiers(const DomItem &item,
     case QQmlLSUtils::JavaScriptIdentifier:
     case QQmlLSUtils::GroupedPropertyIdentifier:
     case QQmlLSUtils::PropertyIdentifier: {
-        if (links.empty())
-            return std::nullopt;
-        ExtractDocumentation extractor(DomType::PropertyDefinition);
-        return tryExtract(extractor, links, expr.name.value());
+        if (!links.empty()) {
+            ExtractDocumentation extractor(DomType::PropertyDefinition);
+            if (const auto extracted = tryExtract(extractor, links, expr.name.value()))
+                return extracted;
+        }
+        return sourceDocumentationForPropertyIdentifier(expr);
     }
     case QQmlLSUtils::PropertyChangedSignalIdentifier:
-    case QQmlLSUtils::PropertyChangedHandlerIdentifier:
+    case QQmlLSUtils::PropertyChangedHandlerIdentifier: {
+        if (const auto sourceDocumentation = sourceDocumentationForPropertyIdentifier(expr))
+            return sourceDocumentation;
+        [[fallthrough]];
+    }
     case QQmlLSUtils::SignalIdentifier:
     case QQmlLSUtils::SignalHandlerIdentifier:
     case QQmlLSUtils::MethodIdentifier: {
@@ -276,17 +378,62 @@ HelpManager::sourceDocumentationForMethodIdentifier(const DomItem &item,
         name = *signalName;
     }
 
-    const DomItem ownerFile = QQmlLSUtils::goToFileOfScope(item, expr.semanticScope);
-    if (!ownerFile)
+    const auto definingScope = definingScopeForMethod(expr.semanticScope, name);
+    if (!definingScope)
         return std::nullopt;
 
-    const DomItem owner = QQmlLSUtils::sourceLocationToDomItem(
-                                  ownerFile, expr.semanticScope->sourceLocation())
-                                  .qmlObject();
-    if (!owner)
+    const auto methods = definingScope->methods(name);
+    if (scopeDefinedInQmltypes(definingScope) && !methods.isEmpty()) {
+        QStringList signatures;
+        for (const auto &method : methods)
+            signatures.append(metaMethodSignature(method));
+        signatures.removeDuplicates();
+        return markdownCodeBlock(signatures.join(u'\n')).toUtf8();
+    }
+
+    const DomItem ownerFile = QQmlLSUtils::goToFileOfScope(item, definingScope);
+    if (ownerFile) {
+        const DomItem owner = QQmlLSUtils::sourceLocationToDomItem(
+                                      ownerFile, definingScope->sourceLocation())
+                                      .qmlObject();
+        if (owner) {
+            if (const auto sourceDocumentation =
+                        sourceDocumentationForMethod(owner.field(Fields::methods).key(name).index(0))) {
+                return sourceDocumentation;
+            }
+        }
+    }
+
+    if (methods.isEmpty())
         return std::nullopt;
 
-    return sourceDocumentationForMethod(owner.field(Fields::methods).key(name).index(0));
+    QStringList signatures;
+    for (const auto &method : methods)
+        signatures.append(metaMethodSignature(method));
+    signatures.removeDuplicates();
+    return markdownCodeBlock(signatures.join(u'\n')).toUtf8();
+}
+
+std::optional<QByteArray>
+HelpManager::sourceDocumentationForPropertyIdentifier(
+        const QQmlLSUtils::ExpressionType &expr) const
+{
+    if (!expr.semanticScope)
+        return std::nullopt;
+
+    const auto propertyName = propertyNameFromExpression(expr);
+    if (!propertyName)
+        return std::nullopt;
+
+    const auto definingScope = definingScopeForProperty(expr.semanticScope, *propertyName);
+    if (!definingScope)
+        return std::nullopt;
+
+    const auto property = definingScope->property(*propertyName);
+    if (!property.isValid())
+        return std::nullopt;
+
+    return markdownCodeBlock(metaPropertySignature(property)).toUtf8();
 }
 
 std::optional<QByteArray>
