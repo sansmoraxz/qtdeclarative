@@ -479,6 +479,118 @@ static std::optional<Location> locationFromDomItem(const DomItem &item, FileLoca
     return Location::tryFrom(item.canonicalFilePath(), sourceLocation, item);
 }
 
+static std::optional<Location> locationFromSingletonScope(const QQmlJSScope::ConstPtr &scope,
+                                                          const DomItem &item)
+{
+    if (!scope)
+        return {};
+
+    const auto sourceLocation = scope->sourceLocation();
+    if (!sourceLocation.isValid())
+        return {};
+
+    const QFileInfo fileInfo(scope->filePath());
+    if (!fileInfo.exists())
+        return {};
+
+    const QString filePath = fileInfo.canonicalFilePath();
+    if (filePath.isEmpty())
+        return {};
+
+    return Location::tryFrom(filePath, sourceLocation, item);
+}
+
+static std::optional<Location> locationFromModuleExport(const DomItem &exportItem)
+{
+    if (!exportItem || exportItem.internalKind() != DomType::Export)
+        return {};
+
+    const DomItem typeDefinition = exportItem.field(Fields::type).get();
+    if (!typeDefinition)
+        return {};
+
+    if (const auto componentLocation =
+                locationFromDomItem(typeDefinition.component(), FileLocationRegion::IdentifierRegion)) {
+        return componentLocation;
+    }
+
+    if (const auto typeLocation =
+                locationFromDomItem(typeDefinition, FileLocationRegion::IdentifierRegion)) {
+        return typeLocation;
+    }
+
+    if (const auto typeLocation = locationFromDomItem(typeDefinition, FileLocationRegion::MainRegion))
+        return typeLocation;
+
+    if (const QString typeFilePath = typeDefinition.canonicalFilePath(); !typeFilePath.isEmpty()) {
+        if (const auto fileLocation = locationAtStartOfFile(typeFilePath))
+            return fileLocation;
+    }
+
+    const DomItem exportSource = exportItem.field(Fields::exportSource).get();
+    if (!exportSource)
+        return {};
+
+    if (const auto exportLocation = locationFromDomItem(exportSource, FileLocationRegion::MainRegion))
+        return exportLocation;
+
+    const QString exportSourcePath = exportSource.canonicalFilePath();
+    if (exportSourcePath.isEmpty())
+        return {};
+
+    return locationAtStartOfFile(exportSourcePath);
+}
+
+static std::optional<Location> findModuleExportDefinitionOf(const DomItem &item,
+                                                            const QString &moduleName,
+                                                            const QString &typeName)
+{
+    if (moduleName.isEmpty() || typeName.isEmpty())
+        return {};
+
+    const auto env = item.environment().ownerAs<DomEnvironment>();
+    if (!env)
+        return {};
+
+    const auto tryModuleVersion = [&](int majorVersion, int minorVersion) -> std::optional<Location> {
+        const auto moduleIndex =
+                env->moduleIndexWithUri(item.environment(), moduleName, majorVersion, EnvLookup::Normal);
+        if (!moduleIndex)
+            return {};
+
+        const DomItem moduleIndexItem = item.environment().copy(moduleIndex);
+        const auto exports = moduleIndex->exportsWithNameAndMinorVersion(moduleIndexItem, typeName,
+                                                                         minorVersion);
+        for (const DomItem &exportItem : exports) {
+            if (const auto location = locationFromModuleExport(exportItem))
+                return location;
+        }
+
+        return {};
+    };
+
+    bool matchedImport = false;
+    const DomItem imports = item.fileObject().field(Fields::imports);
+    for (int i = 0; i < imports.indexes(); ++i) {
+        const auto import = imports[i].as<Import>();
+        if (!import || import->uri.isDirectory() || import->uri.moduleUri() != moduleName)
+            continue;
+
+        matchedImport = true;
+        const int majorVersion = import->version.majorVersion < 0 ? Version::Latest
+                                                                  : import->version.majorVersion;
+        const int minorVersion = import->version.minorVersion < 0 ? Version::Latest
+                                                                  : import->version.minorVersion;
+        if (const auto location = tryModuleVersion(majorVersion, minorVersion))
+            return location;
+    }
+
+    if (!matchedImport)
+        return {};
+
+    return tryModuleVersion(Version::Latest, Version::Latest);
+}
+
 /*!
    \internal
    \brief Returns the location of the type definition pointed by object.
@@ -2057,6 +2169,13 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
         return Location::tryFrom(resolvedExpression->semanticScope->filePath(),
                                  resolvedExpression->semanticScope->sourceLocation(), item);
     }
+    case SingletonIdentifier: {
+        if (const auto scopeLocation = locationFromSingletonScope(resolvedExpression->semanticScope, item))
+            return scopeLocation;
+
+        return findModuleExportDefinitionOf(item, resolvedExpression->semanticScope->moduleName(),
+                                            *resolvedExpression->name);
+    }
     case QualifiedModuleIdentifier: {
         const DomItem imports = item.fileObject().field(Fields::imports);
         for (int i = 0; i < imports.indexes(); ++i) {
@@ -2073,7 +2192,6 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
         }
         return {};
     }
-    case SingletonIdentifier:
     case EnumeratorIdentifier:
     case EnumeratorValueIdentifier:
     case GroupedPropertyIdentifier:

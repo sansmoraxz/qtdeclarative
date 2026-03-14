@@ -1970,6 +1970,17 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
                            u"findDefinition/TestAppWithBuildFolder/build/somesubfolder/anothersubfolder"_s)
                    };
     }
+
+    {
+        const QString singletonUsages = testFile(u"findDefinition/SingletonUsages.qml"_s);
+        const QString singletonQml = testFile(u"findDefinition/SingletonModule/MySingleton.qml"_s);
+        QTest::addRow("singletonFromModule")
+                << singletonUsages << 9 << 34 << singletonQml << 8 << 1 << strlen("QtObject")
+                << noExtraBuildDir;
+        QTest::addRow("qualifiedSingletonFromModule")
+                << singletonUsages << 10 << 47 << singletonQml << 8 << 1 << strlen("QtObject")
+                << noExtraBuildDir;
+    }
 }
 
 void tst_qmlls_utils::findDefinitionFromLocation()
@@ -2018,6 +2029,37 @@ void tst_qmlls_utils::findDefinitionFromLocation()
     QCOMPARE(definition->sourceLocation().startLine, quint32(expectedLine));
     QCOMPARE(definition->sourceLocation().startColumn, quint32(expectedCharacter));
     QCOMPARE(definition->sourceLocation().length, quint32(expectedLength));
+}
+
+void tst_qmlls_utils::findDefinitionFileFromLocation_data()
+{
+    QTest::addColumn<QString>("filePath");
+    QTest::addColumn<int>("line");
+    QTest::addColumn<int>("character");
+    QTest::addColumn<QString>("expectedFilePathSuffix");
+
+    const QString file = testFile(u"Yyy.qml"_s);
+    QTest::addRow("singletonFromPluginMetadata")
+            << file << 78 << 33 << u"/QtCore/plugins.qmltypes"_s;
+}
+
+void tst_qmlls_utils::findDefinitionFileFromLocation()
+{
+    QFETCH(QString, filePath);
+    QFETCH(int, line);
+    QFETCH(int, character);
+    QFETCH(QString, expectedFilePathSuffix);
+
+    auto [env, file] = createEnvironmentAndLoadFile(filePath);
+
+    auto locations = QQmlLSUtils::itemsFromTextLocation(
+            file.field(QQmlJS::Dom::Fields::currentItem), line - 1, character - 1);
+
+    QCOMPARE(locations.size(), 1);
+
+    auto definition = QQmlLSUtils::findDefinitionOf(locations.front().domItem);
+    QVERIFY(definition);
+    QVERIFY(QStringView(definition->filename()).endsWith(expectedFilePathSuffix));
 }
 
 void tst_qmlls_utils::resolveExpressionType_data()
