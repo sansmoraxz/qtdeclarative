@@ -479,6 +479,47 @@ static std::optional<Location> locationFromDomItem(const DomItem &item, FileLoca
     return Location::tryFrom(item.canonicalFilePath(), sourceLocation, item);
 }
 
+static QString canonicalFilePathOfScope(const QQmlJSScope::ConstPtr &scope)
+{
+    if (!scope)
+        return {};
+
+    const QString filePath = scope->filePath();
+    if (filePath.isEmpty())
+        return {};
+
+    const QString canonicalFilePath = QFileInfo(filePath).canonicalFilePath();
+    return canonicalFilePath.isEmpty() ? filePath : canonicalFilePath;
+}
+
+static bool scopesMatch(const QQmlJSScope::ConstPtr &target, const QQmlJSScope::ConstPtr &current)
+{
+    if (target == current)
+        return true;
+    if (!target || !current)
+        return false;
+
+    const QQmlJS::SourceLocation targetLocation = target->sourceLocation();
+    const QQmlJS::SourceLocation currentLocation = current->sourceLocation();
+    if (targetLocation.isValid() != currentLocation.isValid())
+        return false;
+
+    if (targetLocation.isValid()) {
+        if (targetLocation.startLine != currentLocation.startLine
+            || targetLocation.startColumn != currentLocation.startColumn
+            || targetLocation.length != currentLocation.length) {
+            return false;
+        }
+    }
+
+    const QString targetPath = canonicalFilePathOfScope(target);
+    const QString currentPath = canonicalFilePathOfScope(current);
+    if (targetPath.isEmpty() || currentPath.isEmpty())
+        return false;
+
+    return targetPath == currentPath;
+}
+
 static std::optional<Location> locationFromSingletonScope(const QQmlJSScope::ConstPtr &scope,
                                                           const DomItem &item)
 {
@@ -1015,7 +1056,7 @@ static void findUsagesOfNonJSIdentifiers(const DomItem &item, const QString &nam
 
                 const QQmlJSScope::ConstPtr target = expressionType->semanticScope;
                 const QQmlJSScope::ConstPtr current = currentType->semanticScope;
-                if (target == current) {
+                if (scopesMatch(target, current)) {
                     auto tree = FileLocations::treeOf(toBeResolved);
                     QQmlJS::SourceLocation sourceLocation;
 

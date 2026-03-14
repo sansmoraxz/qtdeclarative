@@ -685,6 +685,7 @@ void tst_qmlls_utils::findBaseObject()
 struct UsageData
 {
     QString testFileName;
+    QStringList extraBuildDirs;
     QQmlLSUtils::Usages expectedUsages;
 };
 
@@ -701,11 +702,13 @@ void tst_qmlls_utils::findUsages_data()
         return QString{};
     };
 
-    const auto makeUsages = [](const QString &fileName, QList<QQmlLSUtils::Location> &locations) {
+    const auto makeUsages = [](const QString &fileName, QList<QQmlLSUtils::Location> &locations,
+                               const QStringList &extraBuildDirs = {}) {
         UsageData data;
         std::sort(locations.begin(), locations.end());
         data.expectedUsages = { locations, {} };
         data.testFileName = fileName;
+        data.extraBuildDirs = extraBuildDirs;
         return data;
     };
 
@@ -981,6 +984,30 @@ void tst_qmlls_utils::findUsages_data()
         QTest::addRow("findFunctionUsageFromSameFile") << 6 << 39 << recursiveUsagesFromOtherFile;
         QTest::addRow("findFunctionUsageFromDefinitionInOtherFile")
                 << 4 << 14 << recursiveUsagesFromOtherFile;
+    }
+    {
+        QList<QQmlLSUtils::Location> expectedUsages;
+        const auto sourceFileName = testFile(
+                "findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/Source/Keybinds.qml");
+        const auto sourceFileContent = readFileContent(sourceFileName);
+        const auto mainFileName = testFile(
+                "findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/TestApp/Main.qml");
+        const auto mainFileContent = readFileContent(mainFileName);
+        const QStringList extraBuildDirs = {
+            testFile("findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/build")
+        };
+
+        expectedUsages << QQmlLSUtils::Location::from(sourceFileName, sourceFileContent, 6, 14,
+                                                      strlen("answer"));
+        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 6, 38,
+                                                      strlen("answer"));
+        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 7, 44,
+                                                      strlen("answer"));
+        const auto singletonMethodUsagesFromUsage = makeUsages(mainFileName, expectedUsages, extraBuildDirs);
+        QTest::addRow("findSingletonMethodUsageFromUsageInSymlinkedBuildDir")
+                << 6 << 38 << singletonMethodUsagesFromUsage;
+        QTest::addRow("findQualifiedSingletonMethodUsageFromUsageInSymlinkedBuildDir")
+                << 7 << 44 << singletonMethodUsagesFromUsage;
     }
     {
         const auto testFileName = testFile("findUsages/signalsAndHandlers/signalsAndHandlers.qml");
@@ -1465,7 +1492,7 @@ void tst_qmlls_utils::findUsages()
         QVERIFY(std::is_sorted(usagesInFile.begin(), usagesInFile.end()));
     }
 
-    auto [env, file] = createEnvironmentAndLoadFile(data.testFileName);
+    auto [env, file] = createEnvironmentAndLoadFile(data.testFileName, data.extraBuildDirs);
 
     auto locations = QQmlLSUtils::itemsFromTextLocation(
             file.field(QQmlJS::Dom::Fields::currentItem), line - 1, character - 1);

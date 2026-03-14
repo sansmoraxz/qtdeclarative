@@ -662,6 +662,8 @@ static QLspSpecification::Location locationFrom(const QByteArray fileName, const
 void tst_qmlls_modules::findUsages_data()
 {
     QTest::addColumn<QString>("filePath");
+    QTest::addColumn<QStringList>("preOpenedFiles");
+    QTest::addColumn<QStringList>("buildDirs");
     QTest::addColumn<int>("line");
     QTest::addColumn<int>("character");
     QTest::addColumn<QList<QLspSpecification::Location>>("expectedUsages");
@@ -689,9 +691,46 @@ void tst_qmlls_modules::findUsages_data()
     QVERIFY(sumUsages.front().uri.startsWith("file://"_ba));
 
     // line and character start at 1!
-    QTest::addRow("sumUsagesFromUsage") << jsIdentifierUsagesPath << 10 << 14 << sumUsages;
-    QTest::addRow("sumUsagesFromUsage2") << jsIdentifierUsagesPath << 10 << 20 << sumUsages;
-    QTest::addRow("sumUsagesFromDefinition") << jsIdentifierUsagesPath << 8 << 14 << sumUsages;
+    QTest::addRow("sumUsagesFromUsage")
+            << jsIdentifierUsagesPath << QStringList{} << QStringList{} << 10 << 14 << sumUsages;
+    QTest::addRow("sumUsagesFromUsage2")
+            << jsIdentifierUsagesPath << QStringList{} << QStringList{} << 10 << 20 << sumUsages;
+    QTest::addRow("sumUsagesFromDefinition")
+            << jsIdentifierUsagesPath << QStringList{} << QStringList{} << 8 << 14 << sumUsages;
+
+    const QString mainFilePath = u"findUsages/SingletonSymlinkedBuildDir/TestApp/Main.qml"_s;
+    const QString sourceFilePath = u"findUsages/SingletonSymlinkedBuildDir/Source/Keybinds.qml"_s;
+    const QByteArray mainUri = testFileUrl(mainFilePath).toEncoded();
+    const QByteArray sourceUri = testFileUrl(sourceFilePath).toEncoded();
+
+    QString mainFileContent;
+    {
+        QFile file(testFile(mainFilePath));
+        QVERIFY(file.open(QIODeviceBase::ReadOnly));
+        mainFileContent = QString::fromUtf8(file.readAll());
+    }
+
+    QString sourceFileContent;
+    {
+        QFile file(testFile(sourceFilePath));
+        QVERIFY(file.open(QIODeviceBase::ReadOnly));
+        sourceFileContent = QString::fromUtf8(file.readAll());
+    }
+
+    const QList<QLspSpecification::Location> singletonMethodUsages = {
+        locationFrom(sourceUri, sourceFileContent, 6, 14,
+                     static_cast<quint32>(strlen("answer"))),
+        locationFrom(mainUri, mainFileContent, 6, 38,
+                     static_cast<quint32>(strlen("answer"))),
+        locationFrom(mainUri, mainFileContent, 7, 44,
+                     static_cast<quint32>(strlen("answer"))),
+    };
+
+    QTest::addRow("singletonMethodFromDefinitionInSymlinkedBuildDir")
+            << sourceFilePath
+            << QStringList{ mainFilePath }
+            << QStringList{ testFile(u"findUsages/SingletonSymlinkedBuildDir/build"_s) }
+            << 6 << 14 << singletonMethodUsages;
 }
 
 static bool locationsAreEqual(const QLspSpecification::Location &a,
@@ -722,12 +761,47 @@ static QString locationToString(const QLspSpecification::Location &l)
 void tst_qmlls_modules::findUsages()
 {
     QFETCH(QString, filePath);
+    QFETCH(QStringList, preOpenedFiles);
+    QFETCH(QStringList, buildDirs);
     // line and character start at 1!
     QFETCH(int, line);
     QFETCH(int, character);
     QFETCH(QList<QLspSpecification::Location>, expectedUsages);
 
     ignoreDiagnostics();
+
+    QList<QPair<QByteArray, QString>> openedFiles;
+    for (const QString &extraFile : preOpenedFiles) {
+        const auto extraUri = openFile(extraFile);
+        QVERIFY(extraUri);
+        openedFiles.append({ *extraUri, extraFile });
+    }
+
+    if (!buildDirs.isEmpty()) {
+        Notifications::AddBuildDirsParams bDirs;
+        for (const auto &[openedUri, _] : openedFiles) {
+            UriToBuildDirs ub;
+            ub.baseUri = openedUri;
+            for (const QString &buildDir : buildDirs)
+                ub.buildDirs.append(buildDir.toUtf8());
+            bDirs.buildDirsToSet.append(ub);
+        }
+        m_protocol->typedRpc()->sendNotification(QByteArray(Notifications::AddBuildDirsMethod),
+                                                 bDirs);
+
+        for (const auto &[openedUri, openedFile] : openedFiles) {
+            DidChangeTextDocumentParams didChange;
+            didChange.textDocument.uri = openedUri;
+            didChange.textDocument.version = 2;
+            TextDocumentContentChangeEvent change;
+            QFile file(testFile(openedFile));
+            QVERIFY(file.open(QIODeviceBase::ReadOnly));
+            change.range = std::nullopt;
+            change.text = file.readAll();
+            didChange.contentChanges.append(change);
+            m_protocol->notifyDidChangeTextDocument(didChange);
+        }
+    }
 
     const auto uri = openFile(filePath);
     QVERIFY(uri);
