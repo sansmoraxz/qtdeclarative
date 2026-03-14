@@ -974,9 +974,10 @@ void QQmlDomAstCreator::endVisit(AST::UiSourceElement *el)
 bool QQmlDomAstCreator::visit(AST::UiObjectDefinition *el)
 {
     // JavaScript object literals inside script bindings also surface as UiObjectDefinition nodes.
-    // Once script DOM construction has been disabled, treating them like QML objects corrupts the
-    // QML node stack and later crashes qmlls while visiting mixed JS/QML files.
-    if (currentNode().kind == DomType::Binding) {
+    // Only skip them once script DOM construction has already been disabled for the surrounding
+    // binding. Otherwise, generalized grouped property blocks such as PropertyChanges targets are
+    // also represented this way and must still be added to the QML DOM.
+    if (!m_enableScriptExpressions && currentNode().kind == DomType::Binding) {
         if (auto *binding = std::get_if<Binding>(&currentNode().value); binding && !binding->objectValue())
             return false;
     }
