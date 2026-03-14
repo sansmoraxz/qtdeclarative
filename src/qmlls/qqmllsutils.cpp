@@ -5,6 +5,8 @@
 #include "qqmllsutils_p.h"
 
 #include <QtCore/qassert.h>
+#include <QtCore/qfile.h>
+#include <QtCore/qfileinfo.h>
 #include <QtLanguageServer/private/qlanguageserverspectypes_p.h>
 #include <QtCore/qthreadpool.h>
 #include <QtCore/private/qduplicatetracker_p.h>
@@ -30,6 +32,52 @@ using namespace QQmlJS::Dom;
 using namespace Qt::StringLiterals;
 
 namespace QQmlLSUtils {
+static std::optional<Location> locationAtStartOfFile(const QString &fileName)
+{
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+
+    return Location::from(fileName, QString::fromUtf8(file.readAll()), 1, 1, 0);
+}
+
+static std::optional<Location> importDefinitionLocation(const DomItem &importItem)
+{
+    const auto import = importItem.as<Import>();
+    if (!import || !import->uri.isDirectory())
+        return {};
+
+    const QString importingDirectory = QFileInfo(importItem.canonicalFilePath()).absolutePath();
+    const QFileInfo importInfo(import->uri.absoluteLocalPath(importingDirectory));
+    if (!importInfo.isFile())
+        return {};
+
+    return locationAtStartOfFile(importInfo.canonicalFilePath());
+}
+
+static std::optional<Location> findFileImportDefinitionOf(const DomItem &item, const QString &name,
+                                                          const QQmlJS::SourceLocation &location)
+{
+    const DomItem imports = item.fileObject().field(Fields::imports);
+    for (int i = 0; i < imports.indexes(); ++i) {
+        if (imports[i][Fields::importId].value().toString() != name)
+            continue;
+
+        const auto fileLocations = FileLocations::treeOf(imports[i]);
+        if (!fileLocations)
+            continue;
+
+        const auto region = fileLocations->info().regions.constFind(IdNameRegion);
+        if (region == fileLocations->info().regions.constEnd() || *region != location)
+            continue;
+
+        if (const auto importedFileLocation = importDefinitionLocation(imports[i]))
+            return importedFileLocation;
+    }
+
+    return {};
+}
+
 QString qualifiersFrom(const DomItem &el)
 {
     const bool isAccess = QQmlLSUtils::isFieldMemberAccess(el);
@@ -1961,6 +2009,11 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
         if (!jsIdentifier)
             return {};
 
+        if (const auto importLocation = findFileImportDefinitionOf(
+                    item, *resolvedExpression->name, jsIdentifier->location)) {
+            return importLocation;
+        }
+
         return Location::tryFrom(resolvedExpression->semanticScope->filePath(),
                                  jsIdentifier->location, item);
     }
@@ -2008,6 +2061,9 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
         const DomItem imports = item.fileObject().field(Fields::imports);
         for (int i = 0; i < imports.indexes(); ++i) {
             if (imports[i][Fields::importId].value().toString() == resolvedExpression->name) {
+                if (const auto importLocation = importDefinitionLocation(imports[i]))
+                    return importLocation;
+
                 const auto fileLocations = FileLocations::treeOf(imports[i]);
                 if (!fileLocations)
                     continue;

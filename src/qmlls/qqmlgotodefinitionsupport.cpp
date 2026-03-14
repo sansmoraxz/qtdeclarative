@@ -9,6 +9,7 @@
 #include <QtQmlDom/private/qqmldomexternalitems_p.h>
 #include <QtQmlDom/private/qqmldomtop_p.h>
 #include <QtCore/qfile.h>
+#include <QtCore/qfileinfo.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -44,10 +45,16 @@ static std::optional<QQmlLSUtils::Location> findImportDefinitionOf(const DomItem
         return {};
 
     if (import->uri.isDirectory()) {
-        const QString importPath = import->uri.absoluteLocalPath();
+        const QString importPath = import->uri.absoluteLocalPath(
+                QFileInfo(importItem.canonicalFilePath()).absolutePath());
         if (importPath.isEmpty())
             return {};
-        return locationAtStartOfFile(importPath + u"/qmldir"_s);
+
+        const QFileInfo importInfo(importPath);
+        if (importInfo.isFile())
+            return locationAtStartOfFile(importInfo.canonicalFilePath());
+
+        return locationAtStartOfFile(importInfo.filePath() + u"/qmldir"_s);
     }
 
     const auto env = importItem.environment().ownerAs<DomEnvironment>();
