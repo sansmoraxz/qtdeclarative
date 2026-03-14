@@ -383,17 +383,41 @@ bool QQmlDomAstCreator::visit(UiProgram *program)
 
 void QQmlDomAstCreator::endVisit(AST::UiProgram *)
 {
+    if (nodeStack.isEmpty()) {
+        qCWarning(creatorLog) << "Unexpected empty DOM node stack while finalizing a QML program in"
+                              << qmlFile.canonicalFilePath();
+        return;
+    }
+    if (currentNode().kind != DomType::QmlComponent) {
+        qCWarning(creatorLog) << "Unexpected DOM node on stack while finalizing a QML program:"
+                              << domTypeToString(currentNode().kind) << "in"
+                              << qmlFile.canonicalFilePath();
+        nodeStack.clear();
+        return;
+    }
+
     MutableDomItem newC = qmlFile.path(currentNodeEl().path);
-    QmlComponent &comp = current<QmlComponent>();
+    QmlComponent &comp = std::get<QmlComponent>(currentNode().value);
     for (const Pragma &p : qmlFilePtr->pragmas()) {
         if (p.name.compare(u"singleton", Qt::CaseInsensitive) == 0) {
             comp.setIsSingleton(true);
             comp.setIsCreatable(false); // correct?
         }
     }
-    *newC.mutableAs<QmlComponent>() = comp;
+    if (auto *component = newC.mutableAs<QmlComponent>()) {
+        *component = comp;
+    } else {
+        qCWarning(creatorLog) << "Could not recover the target QML component while finalizing"
+                              << qmlFile.canonicalFilePath();
+        nodeStack.clear();
+        return;
+    }
     removeCurrentNode(DomType::QmlComponent);
-    Q_ASSERT_X(nodeStack.isEmpty(), className, "ui program did not finish node stack");
+    if (!nodeStack.isEmpty()) {
+        qCWarning(creatorLog) << "QML program finished with leftover DOM nodes while finalizing"
+                              << qmlFile.canonicalFilePath();
+        nodeStack.clear();
+    }
 }
 
 bool QQmlDomAstCreator::visit(UiPragma *el)
@@ -949,6 +973,14 @@ void QQmlDomAstCreator::endVisit(AST::UiSourceElement *el)
 
 bool QQmlDomAstCreator::visit(AST::UiObjectDefinition *el)
 {
+    // JavaScript object literals inside script bindings also surface as UiObjectDefinition nodes.
+    // Once script DOM construction has been disabled, treating them like QML objects corrupts the
+    // QML node stack and later crashes qmlls while visiting mixed JS/QML files.
+    if (currentNode().kind == DomType::Binding) {
+        if (auto *binding = std::get_if<Binding>(&currentNode().value); binding && !binding->objectValue())
+            return false;
+    }
+
     QmlObject scope;
     scope.setName(toString(el->qualifiedTypeNameId));
     scope.addPrototypePath(Paths::lookupTypePath(scope.name()));
@@ -1012,36 +1044,105 @@ bool QQmlDomAstCreator::visit(AST::UiObjectDefinition *el)
 
 void QQmlDomAstCreator::endVisit(AST::UiObjectDefinition *)
 {
-    QmlObject &obj = current<QmlObject>();
+    if (nodeStack.isEmpty()) {
+        qCWarning(creatorLog) << "Unexpected empty DOM node stack while finalizing a QML object.";
+        return;
+    }
+
+    if (currentNode().kind != DomType::QmlObject) {
+        qCWarning(creatorLog) << "Unexpected DOM node on stack while finalizing a QML object:"
+                              << domTypeToString(currentNode().kind);
+        return;
+    }
+
+    QmlObject &obj = std::get<QmlObject>(currentNode().value);
     int idx = currentIndex();
     if (!arrayBindingLevels.isEmpty() && nodeStack.size() == arrayBindingLevels.last() + 1) {
         if (currentNode(1).kind == DomType::Binding) {
-            Binding &b = std::get<Binding>(currentNode(1).value);
-            QList<QmlObject> *vals = b.arrayValue();
+            auto *b = std::get_if<Binding>(&currentNode(1).value);
+            if (!b) {
+                qCWarning(creatorLog)
+                        << "Unexpected DOM value on stack while finalizing an array-bound QML object.";
+                removeCurrentNode({});
+                return;
+            }
+            QList<QmlObject> *vals = b->arrayValue();
             Q_ASSERT_X(vals, className,
                        "expected an array binding with a valid QList<QmlScope> as value");
             (*vals)[idx] = obj;
         } else {
-            Q_ASSERT_X(false, className, "expected an array binding as last node on the stack");
+            qCWarning(creatorLog)
+                    << "Unexpected parent DOM node while finalizing an array-bound QML object:"
+                    << domTypeToString(currentNode(1).kind);
+            removeCurrentNode({});
+            return;
         }
     } else {
+        if (nodeStack.size() < 2) {
+            qCWarning(creatorLog)
+                    << "Missing parent DOM node while finalizing a nested QML object.";
+            removeCurrentNode({});
+            return;
+        }
         DomValue &containingObject = currentNodeEl(1).item;
         Path p = currentNodeEl().path;
         switch (containingObject.kind) {
         case DomType::QmlComponent:
-            if (p[p.length() - 2] == Path::fromField(Fields::objects))
-                std::get<QmlComponent>(containingObject.value).m_objects[idx] = obj;
-            else
-                Q_UNREACHABLE();
+            if (p[p.length() - 2] != Path::fromField(Fields::objects)) {
+                qCWarning(creatorLog)
+                        << "Unexpected path while finalizing a component-owned QML object:" << p;
+                removeCurrentNode({});
+                return;
+            }
+            if (auto *component = std::get_if<QmlComponent>(&containingObject.value)) {
+                component->m_objects[idx] = obj;
+            } else {
+                qCWarning(creatorLog)
+                        << "Unexpected DOM value stored for a component-owned QML object.";
+                removeCurrentNode({});
+                return;
+            }
             break;
         case DomType::QmlObject:
-            if (p[p.length() - 2] == Path::fromField(Fields::children))
-                std::get<QmlObject>(containingObject.value).m_children[idx] = obj;
-            else
-                Q_UNREACHABLE();
+            if (p[p.length() - 2] != Path::fromField(Fields::children)) {
+                qCWarning(creatorLog)
+                        << "Unexpected path while finalizing a child QML object:" << p;
+                removeCurrentNode({});
+                return;
+            }
+            if (auto *parentObject = std::get_if<QmlObject>(&containingObject.value)) {
+                parentObject->m_children[idx] = obj;
+            } else {
+                qCWarning(creatorLog)
+                        << "Unexpected DOM value stored for a parent QML object.";
+                removeCurrentNode({});
+                return;
+            }
+            break;
+        case DomType::Binding:
+            if (auto *binding = std::get_if<Binding>(&containingObject.value)) {
+                QmlObject *objectValue = binding->objectValue();
+                if (!objectValue) {
+                    qCWarning(creatorLog)
+                            << "Unexpected binding without object value while finalizing a QML object at"
+                            << p << "for binding" << binding->name() << "in"
+                            << qmlFile.canonicalFilePath();
+                    removeCurrentNode({});
+                    return;
+                }
+                *objectValue = obj;
+            } else {
+                qCWarning(creatorLog)
+                        << "Unexpected DOM value stored for a binding-owned QML object.";
+                removeCurrentNode({});
+                return;
+            }
             break;
         default:
-            Q_UNREACHABLE();
+            qCWarning(creatorLog) << "Unexpected parent DOM type while finalizing a QML object:"
+                                  << domTypeToString(containingObject.kind);
+            removeCurrentNode({});
+            return;
         }
     }
     removeCurrentNode(DomType::QmlObject);

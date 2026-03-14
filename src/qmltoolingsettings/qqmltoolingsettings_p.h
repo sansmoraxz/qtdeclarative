@@ -36,6 +36,7 @@ public:
     QStringList valueAsStringList(const QString &name) const;
 
     static void resolveRelativeImportPaths(const QString &filePath, QStringList *paths);
+    QString currentSettingsPath() const { return m_currentSettingsPath; }
     QStringList valueAsAbsolutePathList(const QString &name,
                                         const QString &baseForRelativePaths) const;
     bool isSet(const QString &name) const;

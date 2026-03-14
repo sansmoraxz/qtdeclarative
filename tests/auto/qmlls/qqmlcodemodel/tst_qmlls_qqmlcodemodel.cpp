@@ -338,6 +338,9 @@ void tst_qmlls_qqmlcodemodel::withQmllsBuildIniRelativeImportPath()
     const QStringList expectedImportPathA{ defaultImportPath, importPathA };
     QCOMPARE_EQ(codemodel.importPathsForFile(testFile("twoWorkspaces/WorkSpaceA/file.qml"_L1)),
                 expectedImportPathA);
+    QCOMPARE_EQ(codemodel.importPathsForFile(
+                        testFile("twoWorkspaces/WorkSpaceA/SubDir/UseImportPathA.qml"_L1)),
+                expectedImportPathA);
 }
 
 void tst_qmlls_qqmlcodemodel::withQmllsIniRelativeImportPath()
@@ -349,6 +352,8 @@ void tst_qmlls_qqmlcodemodel::withQmllsIniRelativeImportPath()
     const QString importPathA = testFile("twoWorkspaces"_L1);
     const QStringList expectedImportPathA = (model.importPaths() << importPathA);
     QCOMPARE_EQ(model.importPathsForFile(testFile("FolderWithQmllsIni/SomeType.qml")),
+                expectedImportPathA);
+    QCOMPARE_EQ(model.importPathsForFile(testFile("FolderWithQmllsIni/subdir/SomeType.qml"_L1)),
                 expectedImportPathA);
 }
 

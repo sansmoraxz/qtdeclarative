@@ -586,9 +586,9 @@ QStringList QQmlCodeModel::importPathsForFile(const QString &fileName)
     QStringList result = importPaths();
 
     const QString importPaths = u"importPaths"_s;
-    if (m_settings && m_settings->search(fileName) && m_settings->isSet(importPaths)) {
-        result.append(m_settings->valueAsAbsolutePathList(importPaths, fileName));
-    }
+    if (m_settings && m_settings->search(fileName) && m_settings->isSet(importPaths))
+        result.append(
+                m_settings->valueAsAbsolutePathList(importPaths, m_settings->currentSettingsPath()));
 
     const QStringList buildPath = buildPathsForFileUrl(m_path2url[fileName]);
     m_buildInformation.loadSettingsFrom(buildPath);
@@ -647,8 +647,8 @@ QStringList QQmlCodeModel::buildPathsForFileUrl(const QByteArray &url)
         m_settings->search(path);
         QString buildDir = QStringLiteral(u"buildDir");
         if (m_settings->isSet(buildDir))
-            buildPaths += m_settings->value(buildDir).toString().split(QDir::listSeparator(),
-                                                                       Qt::SkipEmptyParts);
+            buildPaths += m_settings->valueAsAbsolutePathList(buildDir,
+                                                              m_settings->currentSettingsPath());
     }
 
     // heuristic to find build directory
@@ -827,17 +827,17 @@ void QQmllsBuildInformation::loadSettingsFrom(const QStringList &buildPaths)
 
 QStringList QQmllsBuildInformation::importPathsFor(const QString &filePath)
 {
-    QStringList result;
+    ModuleSetting result;
     qsizetype longestMatch = 0;
     for (const ModuleSetting &setting : m_moduleSettings) {
         const qsizetype matchLength = setting.sourceFolder.size();
         if (filePath.startsWith(setting.sourceFolder) && matchLength > longestMatch) {
-            result = setting.importPaths;
+            result = setting;
             longestMatch = matchLength;
         }
     }
-    QQmlToolingSettings::resolveRelativeImportPaths(filePath, &result);
-    return result;
+    QQmlToolingSettings::resolveRelativeImportPaths(result.sourceFolder, &result.importPaths);
+    return result.importPaths;
 }
 
 QQmllsBuildInformation::QQmllsBuildInformation() { }
