@@ -716,6 +716,16 @@ void tst_qmlls_highlighting::highlights_data()
                                        << HighlightToken(QQmlJS::SourceLocation(337, 4, 12, 20),
                                                 QmlHighlightKind::JsGlobalVar, QmlHighlightModifier::None);
     }
+    { // js interop
+        const auto filePath = m_highlightingDataDir + "/jsInterop.qml";
+        const auto fileItem = fileObject(filePath);
+        QTest::addRow("jsImportUsage") << fileItem
+                                       << HighlightToken(QQmlJS::SourceLocation(104, 6, 6, 24),
+                                                QmlHighlightKind::JsImport, QmlHighlightModifier::None);
+        QTest::addRow("jsGlobalJson") << fileItem
+                                      << HighlightToken(QQmlJS::SourceLocation(148, 4, 7, 24),
+                                               QmlHighlightKind::JsGlobalVar, QmlHighlightModifier::None);
+    }
     { // property chains
         const auto filePath = m_highlightingDataDir + "/propertyChains.qml";
         const auto fileItem = fileObject(filePath);

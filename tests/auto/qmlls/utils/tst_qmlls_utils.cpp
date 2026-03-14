@@ -2109,6 +2109,14 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
                 << singletonUsages << 14 << 69 << singletonQml << 15 << 14 << strlen("legacyAnswer")
                 << noExtraBuildDir;
     }
+
+    {
+        const QString jsInteropQml = testFile(u"highlights/jsInterop.qml"_s);
+        const QString helperJs = testFile(u"highlights/Helper.js"_s);
+        QTest::addRow("jsImportedMethod")
+                << jsInteropQml << 6 << 31 << helperJs << 1 << 10 << strlen("answer")
+                << noExtraBuildDir;
+    }
 }
 
 void tst_qmlls_utils::findDefinitionFromLocation()

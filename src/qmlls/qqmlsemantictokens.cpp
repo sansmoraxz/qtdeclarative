@@ -9,6 +9,7 @@
 #include <QtQmlDom/private/qqmldomfieldfilter_p.h>
 
 #include <QtLanguageServer/private/qlanguageserverprotocol_p.h>
+#include <QtCore/qfileinfo.h>
 
 QT_BEGIN_NAMESPACE
 
@@ -60,7 +61,7 @@ static int mapToProtocolForQtCreator(QmlHighlightKind highlightKind)
     case QmlHighlightKind::QmlPragmaValue:
         return int(SemanticTokenProtocolTypes::Variable);
     case QmlHighlightKind::JsImport:
-        return int(SemanticTokenProtocolTypes::Namespace);
+        return int(SemanticTokenProtocolTypes::JsImportVar);
     case QmlHighlightKind::JsGlobalVar:
         return int(SemanticTokenProtocolTypes::JsGlobalVar);
     case QmlHighlightKind::JsGlobalMethod:
@@ -121,9 +122,9 @@ static int mapToProtocolDefault(QmlHighlightKind highlightKind)
     case QmlHighlightKind::QmlPragmaValue:
         return int(SemanticTokenProtocolTypes::Variable);
     case QmlHighlightKind::JsImport:
-        return int(SemanticTokenProtocolTypes::Namespace);
+        return int(SemanticTokenProtocolTypes::JsImportVar);
     case QmlHighlightKind::JsGlobalVar:
-        return int(SemanticTokenProtocolTypes::Variable);
+        return int(SemanticTokenProtocolTypes::JsGlobalVar);
     case QmlHighlightKind::JsGlobalMethod:
         return int(SemanticTokenProtocolTypes::Method);
     case QmlHighlightKind::JsScopeVar:
@@ -186,6 +187,26 @@ static std::optional<QmlHighlightKind> resolveJsGlobalObjectKind(const DomItem &
         }
     }
     return std::nullopt;
+}
+
+static bool isFileImportAlias(const DomItem &item, const QString &name)
+{
+    const DomItem imports = item.fileObject().field(Fields::imports);
+    for (int i = 0; i < imports.indexes(); ++i) {
+        if (imports[i][Fields::importId].value().toString() != name)
+            continue;
+
+        const auto import = imports[i].as<Import>();
+        if (!import || !import->uri.isDirectory())
+            continue;
+
+        const QString importingDirectory = QFileInfo(imports[i].canonicalFilePath()).absolutePath();
+        const QFileInfo importInfo(import->uri.absoluteLocalPath(importingDirectory));
+        if (importInfo.isFile())
+            return true;
+    }
+
+    return false;
 }
 
 static int fromQmlModifierKindToLspTokenType(QmlHighlightModifiers highlightModifier)
@@ -711,7 +732,8 @@ void HighlightingVisitor::highlightBySemanticAnalysis(const DomItem &item, QQmlJ
         }
     }
     case QQmlLSUtils::SingletonIdentifier:
-        addHighlight(loc, QmlHighlightKind::QmlType);
+        addHighlight(loc, QQmlLSUtils::isFieldMemberBase(item) ? QmlHighlightKind::QmlNamespace
+                                                               : QmlHighlightKind::QmlType);
         return;
     case QQmlLSUtils::EnumeratorIdentifier:
         addHighlight(loc, QmlHighlightKind::QmlEnumName);
@@ -726,7 +748,9 @@ void HighlightingVisitor::highlightBySemanticAnalysis(const DomItem &item, QQmlJ
         addHighlight(loc, QmlHighlightKind::QmlProperty);
         return;
     case QQmlLSUtils::QualifiedModuleIdentifier:
-        addHighlight(loc, QmlHighlightKind::QmlNamespace);
+        addHighlight(loc, expression->name && isFileImportAlias(item, *expression->name)
+                             ? QmlHighlightKind::JsImport
+                             : QmlHighlightKind::QmlNamespace);
         return;
     default:
         qCWarning(semanticTokens)

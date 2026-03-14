@@ -78,6 +78,125 @@ static std::optional<Location> findFileImportDefinitionOf(const DomItem &item, c
     return {};
 }
 
+static QString importedFilePathForAlias(const DomItem &item, const QString &name)
+{
+    const DomItem imports = item.fileObject().field(Fields::imports);
+    for (int i = 0; i < imports.indexes(); ++i) {
+        if (imports[i][Fields::importId].value().toString() != name)
+            continue;
+
+        const auto import = imports[i].as<Import>();
+        if (!import || !import->uri.isDirectory())
+            continue;
+
+        const QString importingDirectory = QFileInfo(imports[i].canonicalFilePath()).absolutePath();
+        const QFileInfo importInfo(import->uri.absoluteLocalPath(importingDirectory));
+        if (!importInfo.isFile())
+            continue;
+
+        return importInfo.canonicalFilePath();
+    }
+
+    return {};
+}
+
+static std::optional<Location> findJavaScriptDeclarationInSource(const QString &filePath,
+                                                                 const QString &memberName)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+
+    const QString code = QString::fromUtf8(file.readAll());
+    const QString escapedName = QRegularExpression::escape(memberName);
+    const QList<QRegularExpression> patterns = {
+        QRegularExpression(uR"((?:^|\n)\s*function\s+(%1)\b)"_s.arg(escapedName),
+                           QRegularExpression::MultilineOption),
+        QRegularExpression(uR"((?:^|\n)\s*(?:const|let|var)\s+(%1)\b)"_s.arg(escapedName),
+                           QRegularExpression::MultilineOption),
+    };
+
+    for (const auto &pattern : patterns) {
+        const auto match = pattern.match(code);
+        if (!match.hasMatch())
+            continue;
+
+        const qsizetype offset = match.capturedStart(1);
+        const auto [line, column] = textRowAndColumnFrom(code, offset);
+        return Location::from(filePath, code, line + 1, column + 1, memberName.size());
+    }
+
+    return {};
+}
+
+static std::optional<Location> findImportedJavaScriptMemberDefinition(
+        const DomItem &item, const QString &aliasName, const QString &memberName)
+{
+    const QString importedFilePath = importedFilePathForAlias(item, aliasName);
+    if (importedFilePath.isEmpty())
+        return {};
+
+    const DomItem importedFile = item.goToFile(importedFilePath).field(Fields::currentItem);
+    std::optional<Location> result;
+    if (importedFile) {
+        auto findDefinition = [&result, &memberName, &importedFilePath](Path, const DomItem &current,
+                                                                        bool) -> bool {
+            if (result)
+                return false;
+
+            if (const auto scope = current.semanticScope()) {
+                if (const auto jsIdentifier = scope->ownJSIdentifier(memberName)) {
+                    result = Location::tryFrom(importedFilePath, jsIdentifier->location, current);
+                    return false;
+                }
+            }
+
+            switch (current.internalKind()) {
+            case DomType::MethodInfo:
+            case DomType::Binding:
+            case DomType::PropertyDefinition:
+            case DomType::QmlObject: {
+                if (current.field(Fields::name).value().toString() == memberName) {
+                    if (const auto fileLocation = FileLocations::treeOf(current)) {
+                        const auto sourceLocation = FileLocations::region(
+                                fileLocation, FileLocationRegion::IdentifierRegion);
+                        if (sourceLocation.isValid())
+                            result = Location::tryFrom(importedFilePath, sourceLocation, current);
+                    }
+                    return false;
+                }
+                break;
+            }
+            case DomType::ScriptVariableDeclarationEntry: {
+                if (current.field(Fields::identifier).value().toString() == memberName) {
+                    if (const auto fileLocation = FileLocations::treeOf(current)) {
+                        const auto sourceLocation =
+                                FileLocations::region(fileLocation, FileLocationRegion::MainRegion);
+                        if (sourceLocation.isValid())
+                            result = Location::tryFrom(importedFilePath, sourceLocation, current);
+                    }
+                    return false;
+                }
+                break;
+            }
+            default:
+                break;
+            }
+
+            return true;
+        };
+
+        importedFile.visitTree(Path(), emptyChildrenVisitor,
+                               VisitOption::VisitSelf | VisitOption::VisitAdopted
+                                       | VisitOption::Recurse,
+                               findDefinition, emptyChildrenVisitor);
+    }
+
+    if (!result)
+        result = findJavaScriptDeclarationInSource(importedFilePath, memberName);
+    return result;
+}
+
 QString qualifiersFrom(const DomItem &el)
 {
     const bool isAccess = QQmlLSUtils::isFieldMemberAccess(el);
@@ -2187,6 +2306,22 @@ findPropertyDefinitionOf(const DomItem &file, QQmlJS::SourceLocation propertyDef
 
 std::optional<Location> findDefinitionOf(const DomItem &item)
 {
+    if (item.internalKind() == DomType::ScriptIdentifierExpression
+        && item.directParent().internalKind() == DomType::ScriptBinaryExpression) {
+        const DomItem parent = item.directParent();
+        if (parent.field(Fields::right) == item) {
+            const QString memberName = item.field(Fields::identifier).value().toString();
+            const DomItem base = parent.field(Fields::left);
+            if (base.internalKind() == DomType::ScriptIdentifierExpression) {
+                const QString aliasName = base.field(Fields::identifier).value().toString();
+                if (const auto importedMember =
+                            findImportedJavaScriptMemberDefinition(parent, aliasName, memberName)) {
+                    return importedMember;
+                }
+            }
+        }
+    }
+
     auto resolvedExpression = resolveExpressionType(item, ResolveOptions::ResolveOwnerType);
 
     if (!resolvedExpression || !resolvedExpression->name
