@@ -9,6 +9,7 @@
 #include <QtCore/qlibraryinfo.h>
 #include <QtCore/qdiriterator.h>
 #include <QtCore/qdir.h>
+#include <QtQml/private/qqmlsignalnames_p.h>
 #include <QtQmlCompiler/private/qqmljstyperesolver_p.h>
 #include <optional>
 
@@ -27,6 +28,11 @@ static QStringList documentationFiles(const QString &qtInstallationPath)
         result << fileInfo.absoluteFilePath();
     }
     return result;
+}
+
+static QString markdownCodeBlock(const QString &code)
+{
+    return u"```qml\n%1\n```"_s.arg(code);
 }
 
 HelpManager::HelpManager()
@@ -92,13 +98,13 @@ HelpManager::extractDocumentationForIdentifiers(const DomItem &item,
                                                 QQmlLSUtils::ExpressionType expr) const
 {
     const auto links = collectDocumentationLinks(item, expr.semanticScope, expr.name.value_or(item.name()));
-    if (links.empty())
-        return std::nullopt;
     switch (expr.type) {
     case QQmlLSUtils::QmlObjectIdIdentifier:
     case QQmlLSUtils::JavaScriptIdentifier:
     case QQmlLSUtils::GroupedPropertyIdentifier:
     case QQmlLSUtils::PropertyIdentifier: {
+        if (links.empty())
+            return std::nullopt;
         ExtractDocumentation extractor(DomType::PropertyDefinition);
         return tryExtract(extractor, links, expr.name.value());
     }
@@ -107,12 +113,18 @@ HelpManager::extractDocumentationForIdentifiers(const DomItem &item,
     case QQmlLSUtils::SignalIdentifier:
     case QQmlLSUtils::SignalHandlerIdentifier:
     case QQmlLSUtils::MethodIdentifier: {
-        ExtractDocumentation extractor(DomType::MethodInfo);
-        return tryExtract(extractor, links, expr.name.value());
+        if (!links.empty()) {
+            ExtractDocumentation extractor(DomType::MethodInfo);
+            if (const auto extracted = tryExtract(extractor, links, expr.name.value()))
+                return extracted;
+        }
+        return sourceDocumentationForMethodIdentifier(item, expr);
     }
     case QQmlLSUtils::SingletonIdentifier:
     case QQmlLSUtils::AttachedTypeIdentifier:
     case QQmlLSUtils::QmlComponentIdentifier: {
+        if (!(m_helpPlugin && !links.empty()))
+            return std::nullopt;
         const auto &keyword = item.field(Fields::identifier).value().toString();
         // The keyword is a qmlobject. Keyword search should be sufficient.
         // TODO: Still there can be multiple qmlobject documentation, with
@@ -169,8 +181,16 @@ std::optional<QByteArray> HelpManager::extractDocumentationForDomElements(const 
         return std::nullopt;
     }
 
-    ExtractDocumentation extractor(item.internalKind());
-    return tryExtract(extractor, links, name);
+    if (!links.empty()) {
+        ExtractDocumentation extractor(item.internalKind());
+        if (const auto extracted = tryExtract(extractor, links, name))
+            return extracted;
+    }
+
+    if (item.internalKind() == DomType::MethodInfo)
+        return sourceDocumentationForMethod(item);
+
+    return std::nullopt;
 }
 
 std::optional<QByteArray>
@@ -200,34 +220,31 @@ HelpManager::tryExtract(ExtractDocumentation &extractor,
 std::optional<QByteArray>
 HelpManager::documentationForItem(const DomItem &file, QLspSpecification::Position position)
 {
-    if (!m_helpPlugin)
-        return std::nullopt;
-
-    if (m_helpPlugin->registeredNamespaces().empty())
-        return std::nullopt;
-
-    // Prepare Cpp types to Qml types mapping.
-    const auto fileItem = file.containingFile().as<QmlFile>();
-    if (!fileItem)
-        return std::nullopt;
-    const auto typeResolver = fileItem->typeResolver();
-    if (typeResolver) {
-        const auto &names = typeResolver->importedNames();
-        for (auto &&[scope, qmlName] : names.asKeyValueRange()) {
-            auto sc = scope;
-            // in some situations, scope->internalName() could be the same
-            // as qmlName. In those cases, the key we are looking for is the
-            // first scope which is non-composite type.
-            // This is mostly the case for templated controls.
-            // Popup <-> Popup
-            // T.Popup <-> Popup
-            // QQuickPopup <-> Popup
-            if (sc && sc->internalName() == qmlName) {
-                while (sc && sc->isComposite())
-                    sc = sc->baseType();
+    // Prepare Cpp types to Qml types mapping when documentation data is available.
+    const bool hasDocumentationPlugin = m_helpPlugin && !m_helpPlugin->registeredNamespaces().empty();
+    if (hasDocumentationPlugin) {
+        const auto fileItem = file.containingFile().as<QmlFile>();
+        if (fileItem) {
+            const auto typeResolver = fileItem->typeResolver();
+            if (typeResolver) {
+                const auto &names = typeResolver->importedNames();
+                for (auto &&[scope, qmlName] : names.asKeyValueRange()) {
+                    auto sc = scope;
+                    // in some situations, scope->internalName() could be the same
+                    // as qmlName. In those cases, the key we are looking for is the
+                    // first scope which is non-composite type.
+                    // This is mostly the case for templated controls.
+                    // Popup <-> Popup
+                    // T.Popup <-> Popup
+                    // QQuickPopup <-> Popup
+                    if (sc && sc->internalName() == qmlName) {
+                        while (sc && sc->isComposite())
+                            sc = sc->baseType();
+                    }
+                    if (sc && !m_cppTypesToQmlTypes.contains(sc->internalName()))
+                        m_cppTypesToQmlTypes.insert(sc->internalName(), qmlName);
+                }
             }
-            if (sc && !m_cppTypesToQmlTypes.contains(sc->internalName()))
-                m_cppTypesToQmlTypes.insert(sc->internalName(), qmlName);
         }
     }
 
@@ -242,6 +259,48 @@ HelpManager::documentationForItem(const DomItem &file, QLspSpecification::Positi
     }
 
     return result;
+}
+
+std::optional<QByteArray>
+HelpManager::sourceDocumentationForMethodIdentifier(const DomItem &item,
+                                                    const QQmlLSUtils::ExpressionType &expr) const
+{
+    if (!expr.name || !expr.semanticScope)
+        return std::nullopt;
+
+    QString name = *expr.name;
+    if (expr.type == QQmlLSUtils::SignalHandlerIdentifier) {
+        const auto signalName = QQmlSignalNames::handlerNameToSignalName(name);
+        if (!signalName)
+            return std::nullopt;
+        name = *signalName;
+    }
+
+    const DomItem ownerFile = QQmlLSUtils::goToFileOfScope(item, expr.semanticScope);
+    if (!ownerFile)
+        return std::nullopt;
+
+    const DomItem owner = QQmlLSUtils::sourceLocationToDomItem(
+                                  ownerFile, expr.semanticScope->sourceLocation())
+                                  .qmlObject();
+    if (!owner)
+        return std::nullopt;
+
+    return sourceDocumentationForMethod(owner.field(Fields::methods).key(name).index(0));
+}
+
+std::optional<QByteArray>
+HelpManager::sourceDocumentationForMethod(const DomItem &methodItem) const
+{
+    const auto *method = methodItem.as<MethodInfo>();
+    if (!method)
+        return std::nullopt;
+
+    QString signature = method->signature(methodItem);
+    if (!methodItem.name().isEmpty() && signature.startsWith(u'('))
+        signature.prepend(methodItem.name());
+
+    return markdownCodeBlock(signature).toUtf8();
 }
 
 /*

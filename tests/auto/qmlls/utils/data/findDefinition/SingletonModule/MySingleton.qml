@@ -7,4 +7,12 @@ import QtQml
 
 QtObject {
     readonly property int value: 42
+
+    function answer(prefix: string): string {
+        return prefix + value
+    }
+
+    function legacyAnswer(prefix) {
+        return prefix + value
+    }
 }

@@ -1972,6 +1972,57 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
     }
 
     {
+        const QString mainQml =
+                testFile(u"findDefinition/TestAppWithBuildFolderSingleton/TestApp/Main.qml"_s);
+        const QString singletonQml =
+                testFile(u"findDefinition/TestAppWithBuildFolderSingleton/build/MySingletonModule/MySingleton.qml"_s);
+        const QString buildDir =
+                testFile(u"findDefinition/TestAppWithBuildFolderSingleton/build"_s);
+        QTest::addRow("singletonMethodFromOtherModuleBuildDir")
+                << mainQml << 6 << 41 << singletonQml << 6 << 14 << strlen("answer")
+                << QStringList{ buildDir };
+        QTest::addRow("qualifiedSingletonMethodFromOtherModuleBuildDir")
+                << mainQml << 7 << 48 << singletonQml << 6 << 14 << strlen("answer")
+                << QStringList{ buildDir };
+    }
+
+    {
+        const QString mainQml =
+                testFile(u"findDefinition/TestAppWithQualifiedSingletonBuildDir/TestApp/Main.qml"_s);
+        const QString singletonQml =
+                testFile(u"findDefinition/TestAppWithQualifiedSingletonBuildDir/build/qs/Commons/Keybinds.qml"_s);
+        const QString buildDir =
+                testFile(u"findDefinition/TestAppWithQualifiedSingletonBuildDir/build"_s);
+        QTest::addRow("singletonMethodFromQualifiedOtherModuleBuildDir")
+                << mainQml << 6 << 38 << singletonQml << 6 << 14 << strlen("answer")
+                << QStringList{ buildDir };
+        QTest::addRow("qualifiedSingletonMethodFromQualifiedOtherModuleBuildDir")
+                << mainQml << 7 << 44 << singletonQml << 6 << 14 << strlen("answer")
+                << QStringList{ buildDir };
+        QTest::addRow("singletonUntypedMethodFromQualifiedOtherModuleBuildDir")
+                << mainQml << 8 << 44 << singletonQml << 10 << 14 << strlen("legacyAnswer")
+                << QStringList{ buildDir };
+        QTest::addRow("qualifiedSingletonUntypedMethodFromQualifiedOtherModuleBuildDir")
+                << mainQml << 9 << 50 << singletonQml << 10 << 14 << strlen("legacyAnswer")
+                << QStringList{ buildDir };
+    }
+
+    {
+        const QString mainQml = testFile(
+                u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/TestApp/Main.qml"_s);
+        const QString singletonQml = testFile(
+                u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/Source/Keybinds.qml"_s);
+        const QString buildDir = testFile(
+                u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/build"_s);
+        QTest::addRow("singletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
+                << mainQml << 6 << 38 << singletonQml << 6 << 14 << strlen("answer")
+                << QStringList{ buildDir };
+        QTest::addRow("qualifiedSingletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
+                << mainQml << 7 << 44 << singletonQml << 6 << 14 << strlen("answer")
+                << QStringList{ buildDir };
+    }
+
+    {
         const QString singletonUsages = testFile(u"findDefinition/SingletonUsages.qml"_s);
         const QString singletonQml = testFile(u"findDefinition/SingletonModule/MySingleton.qml"_s);
         QTest::addRow("singletonFromModule")
@@ -1979,6 +2030,18 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
                 << noExtraBuildDir;
         QTest::addRow("qualifiedSingletonFromModule")
                 << singletonUsages << 10 << 47 << singletonQml << 8 << 1 << strlen("QtObject")
+                << noExtraBuildDir;
+        QTest::addRow("singletonMethodFromModule")
+                << singletonUsages << 11 << 50 << singletonQml << 11 << 14 << strlen("answer")
+                << noExtraBuildDir;
+        QTest::addRow("qualifiedSingletonMethodFromModule")
+                << singletonUsages << 12 << 63 << singletonQml << 11 << 14 << strlen("answer")
+                << noExtraBuildDir;
+        QTest::addRow("singletonUntypedMethodFromModule")
+                << singletonUsages << 13 << 56 << singletonQml << 15 << 14 << strlen("legacyAnswer")
+                << noExtraBuildDir;
+        QTest::addRow("qualifiedSingletonUntypedMethodFromModule")
+                << singletonUsages << 14 << 69 << singletonQml << 15 << 14 << strlen("legacyAnswer")
                 << noExtraBuildDir;
     }
 }
@@ -2060,6 +2123,84 @@ void tst_qmlls_utils::findDefinitionFileFromLocation()
     auto definition = QQmlLSUtils::findDefinitionOf(locations.front().domItem);
     QVERIFY(definition);
     QVERIFY(QStringView(definition->filename()).endsWith(expectedFilePathSuffix));
+}
+
+void tst_qmlls_utils::hoverDocumentation_data()
+{
+    QTest::addColumn<QString>("filePath");
+    QTest::addColumn<int>("line");
+    QTest::addColumn<int>("character");
+    QTest::addColumn<QByteArray>("expectedDocumentation");
+    QTest::addColumn<QStringList>("extraBuildDirs");
+
+    const QString singletonUsages = testFile(u"findDefinition/SingletonUsages.qml"_s);
+    const QByteArray expected = QByteArrayLiteral("```qml\nanswer(prefix: string): string\n```");
+
+    QTest::addRow("singletonMethodFromModule")
+            << singletonUsages << 11 << 50 << expected << QStringList{};
+    QTest::addRow("qualifiedSingletonMethodFromModule")
+            << singletonUsages << 12 << 63 << expected << QStringList{};
+    QTest::addRow("singletonUntypedMethodFromModule")
+            << singletonUsages << 13 << 56
+            << QByteArrayLiteral("```qml\nlegacyAnswer(prefix)\n```") << QStringList{};
+    QTest::addRow("qualifiedSingletonUntypedMethodFromModule")
+            << singletonUsages << 14 << 69
+            << QByteArrayLiteral("```qml\nlegacyAnswer(prefix)\n```") << QStringList{};
+
+    const QString mainQml =
+            testFile(u"findDefinition/TestAppWithBuildFolderSingleton/TestApp/Main.qml"_s);
+    const QString buildDir =
+            testFile(u"findDefinition/TestAppWithBuildFolderSingleton/build"_s);
+    QTest::addRow("singletonMethodFromOtherModuleBuildDir")
+            << mainQml << 6 << 41 << expected << QStringList{ buildDir };
+    QTest::addRow("qualifiedSingletonMethodFromOtherModuleBuildDir")
+            << mainQml << 7 << 48 << expected << QStringList{ buildDir };
+
+    const QString qualifiedMainQml =
+            testFile(u"findDefinition/TestAppWithQualifiedSingletonBuildDir/TestApp/Main.qml"_s);
+    const QString qualifiedBuildDir =
+            testFile(u"findDefinition/TestAppWithQualifiedSingletonBuildDir/build"_s);
+    QTest::addRow("singletonMethodFromQualifiedOtherModuleBuildDir")
+            << qualifiedMainQml << 6 << 38 << expected << QStringList{ qualifiedBuildDir };
+    QTest::addRow("qualifiedSingletonMethodFromQualifiedOtherModuleBuildDir")
+            << qualifiedMainQml << 7 << 44 << expected << QStringList{ qualifiedBuildDir };
+    QTest::addRow("singletonUntypedMethodFromQualifiedOtherModuleBuildDir")
+            << qualifiedMainQml << 8 << 44
+            << QByteArrayLiteral("```qml\nlegacyAnswer(prefix)\n```")
+            << QStringList{ qualifiedBuildDir };
+    QTest::addRow("qualifiedSingletonUntypedMethodFromQualifiedOtherModuleBuildDir")
+            << qualifiedMainQml << 9 << 50
+            << QByteArrayLiteral("```qml\nlegacyAnswer(prefix)\n```")
+            << QStringList{ qualifiedBuildDir };
+
+    const QString symlinkedMainQml =
+            testFile(u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/TestApp/Main.qml"_s);
+    const QString symlinkedBuildDir =
+            testFile(u"findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/build"_s);
+    const QByteArray symlinkedExpected = QByteArrayLiteral("```qml\nanswer(prefix)\n```");
+    QTest::addRow("singletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
+            << symlinkedMainQml << 6 << 38 << symlinkedExpected << QStringList{ symlinkedBuildDir };
+    QTest::addRow("qualifiedSingletonMethodFromSymlinkedQualifiedOtherModuleBuildDir")
+            << symlinkedMainQml << 7 << 44 << symlinkedExpected << QStringList{ symlinkedBuildDir };
+
+}
+
+void tst_qmlls_utils::hoverDocumentation()
+{
+    QFETCH(QString, filePath);
+    QFETCH(int, line);
+    QFETCH(int, character);
+    QFETCH(QByteArray, expectedDocumentation);
+    QFETCH(QStringList, extraBuildDirs);
+
+    auto [env, file] = createEnvironmentAndLoadFile(filePath, extraBuildDirs);
+    HelpManager helpManager;
+    const auto documentation = helpManager.documentationForItem(
+            file.field(QQmlJS::Dom::Fields::currentItem),
+            QLspSpecification::Position{ line - 1, character - 1 });
+
+    QVERIFY(documentation);
+    QCOMPARE(*documentation, expectedDocumentation);
 }
 
 void tst_qmlls_utils::resolveExpressionType_data()

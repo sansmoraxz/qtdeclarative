@@ -1,0 +1,2 @@
+module qs.Commons
+singleton Keybinds 1.0 Keybinds.qml

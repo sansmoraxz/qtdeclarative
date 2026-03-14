@@ -1221,17 +1221,27 @@ Usages findUsagesOf(const DomItem &item)
     return result;
 }
 
-static std::optional<IdentifierType> hasMethodOrSignal(const QQmlJSScope::ConstPtr &scope,
+struct MethodOrSignal
+{
+    QQmlJSScope::ConstPtr definingScope;
+    IdentifierType type;
+};
+
+static std::optional<MethodOrSignal> hasMethodOrSignal(const QQmlJSScope::ConstPtr &scope,
                                                        const QString &name)
 {
-    auto methods = scope->methods(name);
+    const QQmlJSScope::ConstPtr definingScope = findDefiningScopeForMethod(scope, name);
+    if (!definingScope)
+        return {};
+
+    auto methods = definingScope->methods(name);
     if (methods.isEmpty())
         return {};
 
     const bool isSignal = methods.front().methodType() == QQmlJSMetaMethodType::Signal;
     IdentifierType type =
             isSignal ? IdentifierType::SignalIdentifier : IdentifierType::MethodIdentifier;
-    return type;
+    return MethodOrSignal{ definingScope, type };
 }
 
 /*!
@@ -1249,25 +1259,25 @@ methodFromReferrerScope(const QQmlJSScope::ConstPtr &referrerScope, const QStrin
                         ResolveOptions options)
 {
     for (QQmlJSScope::ConstPtr current = referrerScope; current; current = current->parentScope()) {
-        if (auto type = hasMethodOrSignal(current, name)) {
+        if (auto methodOrSignal = hasMethodOrSignal(current, name)) {
             switch (options) {
             case ResolveOwnerType:
-                return ExpressionType{ name, findDefiningScopeForMethod(current, name), *type };
+                return ExpressionType{ name, methodOrSignal->definingScope, methodOrSignal->type };
             case ResolveActualTypeForFieldMemberExpression:
                 // QQmlJSScopes were not implemented for methods yet, but JS functions have methods
                 // and properties see
                 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Function
                 // for the list of properties/methods of functions. Therefore return a null scope.
                 // see also code below for non-qualified method access
-                return ExpressionType{ name, {}, *type };
+                return ExpressionType{ name, {}, methodOrSignal->type };
             }
         }
 
         if (const auto signalName = QQmlSignalNames::handlerNameToSignalName(name)) {
-            if (auto type = hasMethodOrSignal(current, *signalName)) {
+            if (auto methodOrSignal = hasMethodOrSignal(current, *signalName)) {
                 switch (options) {
                 case ResolveOwnerType:
-                    return ExpressionType{ name, findDefiningScopeForMethod(current, *signalName),
+                    return ExpressionType{ name, methodOrSignal->definingScope,
                                            SignalHandlerIdentifier };
                 case ResolveActualTypeForFieldMemberExpression:
                     // Properties and methods of JS methods are not supported yet
@@ -1518,7 +1528,7 @@ static std::optional<ExpressionType> resolveFieldMemberExpressionType(const DomI
         // Enumerations should live under the root element scope of the file that defines the enum,
         // therefore use the DomItem to find the root element of the qml file instead of directly
         // using owner->semanticScope.
-        if (const auto scope = item.goToFile(owner->semanticScope->filePath())
+        if (const auto scope = goToFileOfScope(item, owner->semanticScope)
                                        .rootQmlObject(GoTo::MostLikely)
                                        .semanticScope()) {
             if (scope->hasEnumerationKey(name)) {
@@ -2065,6 +2075,25 @@ DomItem sourceLocationToDomItem(const DomItem &file, const QQmlJS::SourceLocatio
     return {};
 }
 
+DomItem goToFileOfScope(const DomItem &item, const QQmlJSScope::ConstPtr &scope)
+{
+    if (!scope)
+        return {};
+
+    const QString filePath = scope->filePath();
+    if (filePath.isEmpty())
+        return {};
+
+    if (const DomItem directFile = item.goToFile(filePath))
+        return directFile;
+
+    const QString canonicalFilePath = QFileInfo(filePath).canonicalFilePath();
+    if (!canonicalFilePath.isEmpty() && canonicalFilePath != filePath)
+        return item.goToFile(canonicalFilePath);
+
+    return {};
+}
+
 static std::optional<Location>
 findMethodDefinitionOf(const DomItem &file, QQmlJS::SourceLocation location, const QString &name)
 {
@@ -2131,7 +2160,7 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
     }
 
     case PropertyIdentifier: {
-        const DomItem ownerFile = item.goToFile(resolvedExpression->semanticScope->filePath());
+        const DomItem ownerFile = goToFileOfScope(item, resolvedExpression->semanticScope);
         const QQmlJS::SourceLocation ownerLocation =
                 resolvedExpression->semanticScope->sourceLocation();
         return findPropertyDefinitionOf(ownerFile, ownerLocation, *resolvedExpression->name);
@@ -2141,7 +2170,7 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
     case SignalIdentifier:
     case SignalHandlerIdentifier:
     case MethodIdentifier: {
-        const DomItem ownerFile = item.goToFile(resolvedExpression->semanticScope->filePath());
+        const DomItem ownerFile = goToFileOfScope(item, resolvedExpression->semanticScope);
         const QQmlJS::SourceLocation ownerLocation =
                 resolvedExpression->semanticScope->sourceLocation();
         return findMethodDefinitionOf(ownerFile, ownerLocation, *resolvedExpression->name);

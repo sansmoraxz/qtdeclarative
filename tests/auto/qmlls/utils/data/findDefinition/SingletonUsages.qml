@@ -8,4 +8,8 @@ import findDefinition.SingletonModule as FSM
 Item {
     property int singletonValue: MySingleton.value
     property int qualifiedSingletonValue: FSM.MySingleton.value
+    property string singletonText: MySingleton.answer("Qt")
+    property string qualifiedSingletonText: FSM.MySingleton.answer("Qt")
+    property string singletonLegacyText: MySingleton.legacyAnswer("Qt")
+    property string qualifiedSingletonLegacyText: FSM.MySingleton.legacyAnswer("Qt")
 }

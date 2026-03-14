@@ -1,0 +1,1 @@
+../../../Source/Keybinds.qml

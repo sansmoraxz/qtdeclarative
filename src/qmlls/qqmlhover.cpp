@@ -57,7 +57,18 @@ void QQmlHover::process(RequestPointerArgument request)
     const auto textDocument = request->m_parameters.textDocument;
     const auto position = request->m_parameters.position;
     const auto doc = m_codeModel->openDocumentByUrl(QQmlLSUtils::lspUriToQmlUrl(textDocument.uri));
-    DomItem file = doc.snapshot.doc.fileObject(GoTo::MostLikely);
+    if (!doc.snapshot.validDocVersion || doc.snapshot.validDocVersion != doc.snapshot.docVersion) {
+        guard.setError({
+                int(QLspSpecification::ErrorCodes::RequestCancelled),
+                u"Cannot proceed: current QML document is invalid! Fix all the errors in your "
+                u"QML code and try again."_s,
+        });
+        return;
+    }
+
+    DomItem file = doc.snapshot.validDoc.fileObject(GoTo::MostLikely);
+    if (auto envPtr = file.environment().ownerAs<DomEnvironment>())
+        envPtr->clearReferenceCache();
     if (!file) {
         guard.setError(QQmlLSUtils::ErrorMessage{
                 0, u"Could not find the file %1"_s.arg(doc.snapshot.doc.canonicalFilePath()) });

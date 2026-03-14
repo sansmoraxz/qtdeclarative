@@ -36,6 +36,10 @@ public:
             const QQmlJS::Dom::DomItem &file, QLspSpecification::Position position);
 
 private:
+    [[nodiscard]] std::optional<QByteArray> sourceDocumentationForMethodIdentifier(
+            const QQmlJS::Dom::DomItem &item, const QQmlLSUtils::ExpressionType &expr) const;
+    [[nodiscard]] std::optional<QByteArray> sourceDocumentationForMethod(
+            const QQmlJS::Dom::DomItem &methodItem) const;
     [[nodiscard]] std::optional<QByteArray> extractDocumentationForIdentifiers(const QQmlJS::Dom::DomItem &item,
                                                 QQmlLSUtils::ExpressionType expr) const;
     [[nodiscard]] std::optional<QByteArray> extractDocumentationForDomElements(

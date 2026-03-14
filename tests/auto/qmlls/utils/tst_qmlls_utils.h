@@ -17,6 +17,7 @@
 
 #include <QtQmlLS/private/qqmllsutils_p.h>
 #include <QtQmlLS/private/qqmllscompletion_p.h>
+#include <QtQmlLS/private/qqmllshelputils_p.h>
 
 #include <iostream>
 
@@ -58,6 +59,8 @@ private slots:
     void findDefinitionFromLocation();
     void findDefinitionFileFromLocation_data();
     void findDefinitionFileFromLocation();
+    void hoverDocumentation_data();
+    void hoverDocumentation();
 
     void findLocationOfItem_data();
     void findLocationOfItem();

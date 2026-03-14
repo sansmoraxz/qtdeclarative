@@ -259,6 +259,7 @@ qsizetype textOffsetFrom(const QString &code, int row, int character);
 TextPosition textRowAndColumnFrom(const QString &code, qsizetype offset);
 QList<ItemLocation> itemsFromTextLocation(const DomItem &file, int line, int character);
 DomItem sourceLocationToDomItem(const DomItem &file, const QQmlJS::SourceLocation &location);
+DomItem goToFileOfScope(const DomItem &item, const QQmlJSScope::ConstPtr &scope);
 QByteArray lspUriToQmlUrl(const QByteArray &uri);
 QByteArray qmlUrlToLspUri(const QByteArray &url);
 QLspSpecification::Range qmlLocationToLspLocation(Location qmlLocation);
