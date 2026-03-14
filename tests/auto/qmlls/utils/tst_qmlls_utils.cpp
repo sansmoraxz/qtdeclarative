@@ -987,6 +987,30 @@ void tst_qmlls_utils::findUsages_data()
     }
     {
         QList<QQmlLSUtils::Location> expectedUsages;
+        const auto singletonFileName = testFile("findDefinition/SingletonModule/MySingleton.qml");
+        const auto singletonFileContent = readFileContent(singletonFileName);
+        const auto usageFileName = testFile("findDefinition/SingletonUsages.qml");
+        const auto usageFileContent = readFileContent(usageFileName);
+
+        expectedUsages << QQmlLSUtils::Location::from(singletonFileName, singletonFileContent, 9,
+                                                      27, strlen("value"));
+        expectedUsages << QQmlLSUtils::Location::from(singletonFileName, singletonFileContent, 12,
+                                                      25, strlen("value"));
+        expectedUsages << QQmlLSUtils::Location::from(singletonFileName, singletonFileContent, 16,
+                                                      25, strlen("value"));
+        expectedUsages << QQmlLSUtils::Location::from(usageFileName, usageFileContent, 9, 46,
+                                                      strlen("value"));
+        expectedUsages << QQmlLSUtils::Location::from(usageFileName, usageFileContent, 10, 59,
+                                                      strlen("value"));
+
+        const auto singletonPropertyUsagesFromUsage = makeUsages(usageFileName, expectedUsages);
+        QTest::addRow("findSingletonPropertyUsageFromUsage")
+                << 9 << 46 << singletonPropertyUsagesFromUsage;
+        QTest::addRow("findQualifiedSingletonPropertyUsageFromUsage")
+                << 10 << 59 << singletonPropertyUsagesFromUsage;
+    }
+    {
+        QList<QQmlLSUtils::Location> expectedUsages;
         const auto sourceFileName = testFile(
                 "findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/Source/Keybinds.qml");
         const auto sourceFileContent = readFileContent(sourceFileName);
@@ -997,17 +1021,31 @@ void tst_qmlls_utils::findUsages_data()
             testFile("findDefinition/TestAppWithSymlinkedQualifiedSingletonBuildDir/build")
         };
 
-        expectedUsages << QQmlLSUtils::Location::from(sourceFileName, sourceFileContent, 6, 14,
+        expectedUsages << QQmlLSUtils::Location::from(sourceFileName, sourceFileContent, 8, 14,
                                                       strlen("answer"));
-        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 6, 38,
+        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 8, 38,
                                                       strlen("answer"));
-        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 7, 44,
+        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 9, 44,
                                                       strlen("answer"));
         const auto singletonMethodUsagesFromUsage = makeUsages(mainFileName, expectedUsages, extraBuildDirs);
         QTest::addRow("findSingletonMethodUsageFromUsageInSymlinkedBuildDir")
-                << 6 << 38 << singletonMethodUsagesFromUsage;
+                << 8 << 38 << singletonMethodUsagesFromUsage;
         QTest::addRow("findQualifiedSingletonMethodUsageFromUsageInSymlinkedBuildDir")
-                << 7 << 44 << singletonMethodUsagesFromUsage;
+                << 9 << 44 << singletonMethodUsagesFromUsage;
+
+        expectedUsages.clear();
+        expectedUsages << QQmlLSUtils::Location::from(sourceFileName, sourceFileContent, 6, 30,
+                                                      strlen("shortcut"));
+        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 6, 40,
+                                                      strlen("shortcut"));
+        expectedUsages << QQmlLSUtils::Location::from(mainFileName, mainFileContent, 7, 52,
+                                                      strlen("shortcut"));
+        const auto singletonPropertyUsagesFromUsage =
+                makeUsages(mainFileName, expectedUsages, extraBuildDirs);
+        QTest::addRow("findSingletonPropertyUsageFromUsageInSymlinkedBuildDir")
+                << 6 << 40 << singletonPropertyUsagesFromUsage;
+        QTest::addRow("findQualifiedSingletonPropertyUsageFromUsageInSymlinkedBuildDir")
+                << 7 << 52 << singletonPropertyUsagesFromUsage;
     }
     {
         const auto testFileName = testFile("findUsages/signalsAndHandlers/signalsAndHandlers.qml");

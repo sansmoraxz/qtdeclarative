@@ -718,11 +718,11 @@ void tst_qmlls_modules::findUsages_data()
     }
 
     const QList<QLspSpecification::Location> singletonMethodUsages = {
-        locationFrom(sourceUri, sourceFileContent, 6, 14,
+        locationFrom(sourceUri, sourceFileContent, 8, 14,
                      static_cast<quint32>(strlen("answer"))),
-        locationFrom(mainUri, mainFileContent, 6, 38,
+        locationFrom(mainUri, mainFileContent, 8, 38,
                      static_cast<quint32>(strlen("answer"))),
-        locationFrom(mainUri, mainFileContent, 7, 44,
+        locationFrom(mainUri, mainFileContent, 9, 44,
                      static_cast<quint32>(strlen("answer"))),
     };
 
@@ -730,7 +730,22 @@ void tst_qmlls_modules::findUsages_data()
             << sourceFilePath
             << QStringList{ mainFilePath }
             << QStringList{ testFile(u"findUsages/SingletonSymlinkedBuildDir/build"_s) }
-            << 6 << 14 << singletonMethodUsages;
+            << 8 << 14 << singletonMethodUsages;
+
+    const QList<QLspSpecification::Location> singletonPropertyUsages = {
+        locationFrom(sourceUri, sourceFileContent, 6, 30,
+                     static_cast<quint32>(strlen("shortcut"))),
+        locationFrom(mainUri, mainFileContent, 6, 40,
+                     static_cast<quint32>(strlen("shortcut"))),
+        locationFrom(mainUri, mainFileContent, 7, 52,
+                     static_cast<quint32>(strlen("shortcut"))),
+    };
+
+    QTest::addRow("singletonPropertyFromDefinitionInSymlinkedBuildDir")
+            << sourceFilePath
+            << QStringList{ mainFilePath }
+            << QStringList{ testFile(u"findUsages/SingletonSymlinkedBuildDir/build"_s) }
+            << 6 << 30 << singletonPropertyUsages;
 }
 
 static bool locationsAreEqual(const QLspSpecification::Location &a,

@@ -1564,6 +1564,18 @@ static std::optional<ExpressionType> resolveFieldMemberExpressionType(const DomI
     if (auto scope = propertyFromReferrerScope(owner->semanticScope, name, options))
         return *scope;
 
+    // Singleton wrapper scopes can expose methods while the declared QML properties live on the
+    // wrapped root object type. Fall back to the base type for property lookups.
+    if (owner->type == SingletonIdentifier) {
+        if (const auto baseType = owner->semanticScope->baseType()) {
+            if (auto scope = propertyBindingFromReferrerScope(baseType, name, options, nullptr))
+                return *scope;
+
+            if (auto scope = propertyFromReferrerScope(baseType, name, options))
+                return *scope;
+        }
+    }
+
     if (owner->type == QmlComponentIdentifier || owner->type == EnumeratorIdentifier) {
         // Check if name is a enum value <TypeName>.<EnumValue> or ...<EnumName>.<EnumValue>
         // Enumerations should live under the root element scope of the file that defines the enum,
