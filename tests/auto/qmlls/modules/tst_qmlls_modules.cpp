@@ -1423,6 +1423,13 @@ void tst_qmlls_modules::warnings_data()
         QTest::addRow("QmltypesSingletonMethodSignature")
                 << u"warnings/QmltypesSingleton/Main.qml"_s << expectedWarnings;
     }
+    {
+        ExpectedWarnings noWarningsExpected;
+        noWarningsExpected.extraImportPaths.append(testFile("warnings/ObjectBindingProperty"_L1));
+
+        QTest::addRow("ObjectBindingProperty")
+                << u"warnings/ObjectBindingProperty/Main.qml"_s << noWarningsExpected;
+    }
 }
 
 static QString qmllsBuildIniContent(const QString &qmlFileName, QStringList importPaths)

@@ -1023,6 +1023,28 @@ static bool isRevisionAllowed(int memberRevision, const QQmlJSScope::ConstPtr &s
     return typeRevision.isValid() && typeRevision >= revision;
 }
 
+static QQmlJSMetaProperty refinePropertyWithObjectBinding(
+        const QQmlJSScope::ConstPtr &lookupScope, const QString &name, QQmlJSMetaProperty property)
+{
+    if (!lookupScope)
+        return property;
+
+    for (const QQmlJSMetaPropertyBinding &binding : lookupScope->propertyBindings(name)) {
+        if (binding.bindingType() != QQmlSA::BindingType::Object)
+            continue;
+
+        if (const QQmlJSScope::ConstPtr objectType = binding.objectType()) {
+            property.setType(objectType);
+            // Inline object bindings denote a concrete bound object instance, so later member
+            // lookups should use that scope rather than generalizing back to the declared type.
+            property.setIsFinal(true);
+            return property;
+        }
+    }
+
+    return property;
+}
+
 QQmlJSScope::ConstPtr QQmlJSTypeResolver::resolveParentProperty(
         const QString &name, const QQmlJSScope::ConstPtr &base,
         const QQmlJSScope::ConstPtr &propType) const
@@ -1180,6 +1202,7 @@ QQmlJSRegisterContent QQmlJSTypeResolver::scopedType(QQmlJSRegisterContent scope
                 if (!isRevisionAllowed(prop.revision(), contained))
                     return false;
 
+                prop = refinePropertyWithObjectBinding(base, name, prop);
                 prop.setType(resolveParentProperty(name, base, prop.type()));
                 result = m_pool->createProperty(
                         prop, QQmlJSRegisterContent::InvalidLookupIndex, lookupIndex,
@@ -1594,7 +1617,8 @@ QQmlJSRegisterContent QQmlJSTypeResolver::memberType(
 
         if (mode != QQmlJSScope::ExtensionNamespace) {
             if (scope->hasOwnProperty(name)) {
-                const auto prop = scope->ownProperty(name);
+                const auto prop = refinePropertyWithObjectBinding(contained, name,
+                                                                  scope->ownProperty(name));
                 result = m_pool->createProperty(
                         prop, baseLookupIndex, resultLookupIndex,
                         QQmlJSRegisterContent::Property, resultScope);

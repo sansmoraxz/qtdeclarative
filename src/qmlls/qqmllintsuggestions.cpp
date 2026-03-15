@@ -3,11 +3,13 @@
 // Qt-Security score:significant reason:default
 
 #include "qqmllintsuggestions_p.h"
+#include "qqmllsutils_p.h"
 
 #include <QtLanguageServer/private/qlanguageserverspec_p.h>
 #include <QtQmlCompiler/private/qqmljslinter_p.h>
 #include <QtQmlCompiler/private/qqmljslogger_p.h>
 #include <QtQmlCompiler/private/qqmljsutils_p.h>
+#include <QtQmlDom/private/qqmldomscriptelements_p.h>
 #include <QtQmlDom/private/qqmldom_utils_p.h>
 #include <QtQmlDom/private/qqmldomtop_p.h>
 #include <QtCore/qdebug.h>
@@ -218,6 +220,82 @@ static Diagnostic messageToDiagnostic_helper(AdvanceFunc advancePositionPastLoca
     return diagnostic;
 };
 
+static QStringView unresolvedMemberName(QStringView text)
+{
+    if (const qsizetype quotedMember = text.indexOf(u"Member \""_s); quotedMember != -1) {
+        const qsizetype start = quotedMember + QStringView(u"Member \""_s).size();
+        const qsizetype end = text.indexOf(u'"', start);
+        if (end > start)
+            return text.mid(start, end - start);
+    }
+
+    if (const qsizetype propertyLookup = text.lastIndexOf(u"Cannot load property "_s);
+        propertyLookup != -1) {
+        const qsizetype start = propertyLookup + QStringView(u"Cannot load property "_s).size();
+        const qsizetype end = text.indexOf(u' ', start);
+        if (end > start)
+            return text.mid(start, end - start);
+    }
+
+    return {};
+}
+
+static bool shouldSuppressResolvedMemberDiagnostic(const DomItem &doc, const Message &message)
+{
+    if (!message.loc.isValid())
+        return false;
+
+    const QString id = message.id.toString();
+    const QStringView text = message.message;
+    if (id != u"missing-property"_s && id != u"compiler"_s)
+        return false;
+    if (!text.contains(u"Cannot load property "_s)
+        && !text.startsWith(u"Cannot use shadowable base type for further lookups"_s)
+        && !text.contains(u" can be shadowed"_s)
+        && id != u"missing-property"_s) {
+        return false;
+    }
+
+    const QStringView memberName = unresolvedMemberName(text);
+    if (memberName.isEmpty())
+        return false;
+
+    const auto definitionExists = [](const DomItem &item) {
+        return QQmlLSUtils::findDefinitionOf(item).has_value()
+                || QQmlLSUtils::resolveExpressionType(item,
+                                                      QQmlLSUtils::ResolveOwnerType).has_value();
+    };
+    const auto isFieldMemberExpression = [](const DomItem &item) {
+        return item.internalKind() == DomType::ScriptBinaryExpression
+                && item.field(Fields::operation).value().toInteger()
+                == ScriptElements::BinaryExpression::FieldMemberAccess;
+    };
+
+    const int line = message.loc.startLine - 1;
+    for (int column = 0; column < 512; ++column) {
+        const auto locations = QQmlLSUtils::itemsFromTextLocation(doc, line, column);
+        for (const auto &location : locations) {
+            const QString itemName = location.domItem.field(Fields::identifier).value().toString();
+            if (!itemName.isEmpty() && itemName == memberName && definitionExists(location.domItem))
+                return true;
+
+            for (DomItem ancestor = location.domItem.directParent(); ancestor;
+                 ancestor = ancestor.directParent()) {
+                if (!isFieldMemberExpression(ancestor))
+                    continue;
+
+                const DomItem right = ancestor.field(Fields::right);
+                if (right && right.field(Fields::identifier).value().toString() == memberName
+                    && definitionExists(right)) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    return false;
+}
+
 static bool isSnapshotNew(std::optional<int> snapshotVersion, std::optional<int> processedVersion,
                           bool force)
 {
@@ -314,7 +392,10 @@ void QmlLintSuggestions::diagnoseImpl(const QByteArray &url, bool force)
 void QmlLintSuggestions::diagnoseHelper(const QByteArray &url,
                                         const VersionedDocument &versionedDocument)
 {
-    auto [version, doc] = versionedDocument;
+    const auto version = versionedDocument.version;
+    const auto doc = versionedDocument.item;
+    const auto snapshot = m_codeModel->snapshotByUrl(url);
+    const DomItem suppressionDoc = snapshot.validDocVersion ? snapshot.validDoc : doc;
 
     PublishDiagnosticsParams diagnosticParams;
     diagnosticParams.uri = url;
@@ -385,6 +466,9 @@ void QmlLintSuggestions::diagnoseHelper(const QByteArray &url,
     if (const QQmlJSLogger *logger = linter.logger()) {
         qsizetype nDiagnostics = diagnostics.size();
         logger->iterateAllMessages([&](const Message &message) {
+            if (shouldSuppressResolvedMemberDiagnostic(suppressionDoc, message))
+                return;
+
             if (!message.message.contains(u"Failed to import")) {
                 diagnostics.append(messageToDiagnostic(message));
                 return;

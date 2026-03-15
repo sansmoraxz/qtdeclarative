@@ -1048,6 +1048,27 @@ void tst_qmlls_utils::findUsages_data()
                 << 7 << 52 << singletonPropertyUsagesFromUsage;
     }
     {
+        QList<QQmlLSUtils::Location> expectedUsages;
+        const auto settingsFileName =
+                testFile("findDefinition/ObjectBindingSingletonModule/Settings.qml");
+        const auto settingsFileContent = readFileContent(settingsFileName);
+        const auto usageFileName = testFile("findDefinition/ObjectBindingSingletonUsages.qml");
+        const auto usageFileContent = readFileContent(usageFileName);
+
+        expectedUsages << QQmlLSUtils::Location::from(settingsFileName, settingsFileContent, 14,
+                                                      27, strlen("enabled"));
+        expectedUsages << QQmlLSUtils::Location::from(usageFileName, usageFileContent, 5, 56,
+                                                      strlen("enabled"));
+
+        const auto objectBindingUsagesFromUsage = makeUsages(usageFileName, expectedUsages);
+        QTest::addRow("findObjectBindingSingletonPropertyUsageFromUsage")
+                << 5 << 56 << objectBindingUsagesFromUsage;
+
+        const auto objectBindingUsagesFromDefinition = makeUsages(settingsFileName, expectedUsages);
+        QTest::addRow("findObjectBindingSingletonPropertyUsageFromDefinition")
+                << 14 << 27 << objectBindingUsagesFromDefinition;
+    }
+    {
         const auto testFileName = testFile("findUsages/signalsAndHandlers/signalsAndHandlers.qml");
         const auto testFileContent = readFileContent(testFileName);
 
@@ -2108,6 +2129,16 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         QTest::addRow("qualifiedSingletonUntypedMethodFromModule")
                 << singletonUsages << 14 << 69 << singletonQml << 15 << 14 << strlen("legacyAnswer")
                 << noExtraBuildDir;
+    }
+
+    {
+        const QString objectBindingSingletonUsages =
+                testFile(u"findDefinition/ObjectBindingSingletonUsages.qml"_s);
+        const QString objectBindingSettings =
+                testFile(u"findDefinition/ObjectBindingSingletonModule/Settings.qml"_s);
+        QTest::addRow("objectBindingSingletonProperty")
+                << objectBindingSingletonUsages << 5 << 56 << objectBindingSettings << 14 << 27
+                << strlen("enabled") << noExtraBuildDir;
     }
 
     {
