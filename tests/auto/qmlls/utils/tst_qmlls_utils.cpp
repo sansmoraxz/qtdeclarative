@@ -1065,6 +1065,62 @@ void tst_qmlls_utils::findUsages_data()
                 << 5 << 56 << objectBindingUsagesFromUsage;
     }
     {
+        const auto testFileName = testFile("qmlLanguagePatterns/Main.qml");
+        const auto testFileContent = readFileContent(testFileName);
+        {
+            QList<QQmlLSUtils::Location> expectedUsages;
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 8, 12,
+                                                          strlen("fired"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 28, 9,
+                                                          strlen("fired"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 32, 9,
+                                                          strlen("fired"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 33, 9,
+                                                          strlen("fired"));
+            const auto firedUsages = makeUsages(testFileName, expectedUsages);
+            QTest::addRow("findReactiveSignalFromDefinition") << 8 << 12 << firedUsages;
+            QTest::addRow("findReactiveSignalFromConnectCall") << 28 << 9 << firedUsages;
+        }
+        {
+            QList<QQmlLSUtils::Location> expectedUsages;
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 16, 14,
+                                                          strlen("updateLabel"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 28, 23,
+                                                          strlen("updateLabel"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 32, 26,
+                                                          strlen("updateLabel"));
+            const auto updateLabelUsages = makeUsages(testFileName, expectedUsages);
+            QTest::addRow("findReactiveConnectionTargetFromDefinition")
+                    << 16 << 14 << updateLabelUsages;
+            QTest::addRow("findReactiveConnectionTargetFromConnectCall")
+                    << 28 << 23 << updateLabelUsages;
+        }
+        {
+            QList<QQmlLSUtils::Location> expectedUsages;
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 6, 18,
+                                                          strlen("count"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 23, 25,
+                                                          strlen("count"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 30, 40,
+                                                          strlen("count"));
+            const auto countUsages = makeUsages(testFileName, expectedUsages);
+            QTest::addRow("findQtBindingPropertyFromDefinition") << 6 << 18 << countUsages;
+            QTest::addRow("findQtBindingPropertyFromUsage") << 30 << 40 << countUsages;
+        }
+        {
+            QList<QQmlLSUtils::Location> expectedUsages;
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 10, 24,
+                                                          strlen("lazyComponent"));
+            expectedUsages << QQmlLSUtils::Location::from(testFileName, testFileContent, 37, 31,
+                                                          strlen("lazyComponent"));
+            const auto lazyComponentUsages = makeUsages(testFileName, expectedUsages);
+            QTest::addRow("findLazySourceComponentFromDefinition")
+                    << 10 << 24 << lazyComponentUsages;
+            QTest::addRow("findLazySourceComponentFromUsage")
+                    << 37 << 31 << lazyComponentUsages;
+        }
+    }
+    {
         const auto testFileName = testFile("findUsages/signalsAndHandlers/signalsAndHandlers.qml");
         const auto testFileContent = readFileContent(testFileName);
 
@@ -2142,6 +2198,26 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         const QString helperJs = testFile(u"highlights/Helper.js"_s);
         QTest::addRow("jsImportedMethod")
                 << jsInteropQml << 6 << 31 << helperJs << 1 << 10 << strlen("answer")
+                << noExtraBuildDir;
+    }
+
+    {
+        const QString mainQml = testFile(u"qmlLanguagePatterns/Main.qml"_s);
+        const QString neighborTypeQml = testFile(u"qmlLanguagePatterns/NeighborType.qml"_s);
+        QTest::addRow("implicitImportTypeFromSameDirectory")
+                << mainQml << 20 << 5 << neighborTypeQml << 3 << 1 << strlen("Item")
+                << noExtraBuildDir;
+        QTest::addRow("manualBindingPropertyInQtBinding")
+                << mainQml << 30 << 40 << mainQml << 6 << 18 << strlen("count")
+                << noExtraBuildDir;
+        QTest::addRow("reactiveSignalMethodArgument")
+                << mainQml << 28 << 23 << mainQml << 16 << 14 << strlen("updateLabel")
+                << noExtraBuildDir;
+        QTest::addRow("reactiveSignalInConnectCall")
+                << mainQml << 28 << 9 << mainQml << 8 << 12 << strlen("fired")
+                << noExtraBuildDir;
+        QTest::addRow("lazySourceComponentProperty")
+                << mainQml << 37 << 31 << mainQml << 10 << 24 << strlen("lazyComponent")
                 << noExtraBuildDir;
     }
 

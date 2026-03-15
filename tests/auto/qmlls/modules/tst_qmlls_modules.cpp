@@ -580,6 +580,27 @@ void tst_qmlls_modules::goToDefinition_data()
             << objectBindingMainPath << 5 << 56 << objectBindingSettingsUri << 14 << 27 << 14
             << 27 + strlen("enabled");
 
+    const QString qmlLanguagePatternsPath = u"qmlLanguagePatterns/Main.qml"_s;
+    const QByteArray qmlLanguagePatternsUri = testFileUrl(qmlLanguagePatternsPath).toEncoded();
+    const QByteArray qmlLanguagePatternsNeighborUri =
+            testFileUrl(u"qmlLanguagePatterns/NeighborType.qml"_s).toEncoded();
+    QTest::addRow("implicitImportTypeFromSameDirectory")
+            << qmlLanguagePatternsPath << 20 << 5 << qmlLanguagePatternsNeighborUri << 3 << 1
+            << 3
+            << 1 + strlen("Item");
+    QTest::addRow("manualBindingPropertyInQtBinding")
+            << qmlLanguagePatternsPath << 30 << 40 << qmlLanguagePatternsUri << 6 << 18 << 6
+            << 18 + strlen("count");
+    QTest::addRow("reactiveSignalMethodArgument")
+            << qmlLanguagePatternsPath << 28 << 23 << qmlLanguagePatternsUri << 16 << 14 << 16
+            << 14 + strlen("updateLabel");
+    QTest::addRow("reactiveSignalInConnectCall")
+            << qmlLanguagePatternsPath << 28 << 9 << qmlLanguagePatternsUri << 8 << 12 << 8
+            << 12 + strlen("fired");
+    QTest::addRow("lazySourceComponentProperty")
+            << qmlLanguagePatternsPath << 37 << 31 << qmlLanguagePatternsUri << 10 << 24 << 10
+            << 24 + strlen("lazyComponent");
+
     QTest::addRow("comment") << JSDefinitionsQmlPath << 10 << 21 << noResultExpected << -1 << -1
                              << -1 << size_t{};
 }
@@ -787,6 +808,42 @@ void tst_qmlls_modules::findUsages_data()
             << QStringList{ objectBindingMainFilePath }
             << QStringList{}
             << 14 << 27 << objectBindingPropertyUsages;
+
+    const QString qmlLanguagePatternsFilePath = u"qmlLanguagePatterns/Main.qml"_s;
+    const QByteArray qmlLanguagePatternsUri = testFileUrl(qmlLanguagePatternsFilePath).toEncoded();
+
+    QString qmlLanguagePatternsContent;
+    {
+        QFile file(testFile(qmlLanguagePatternsFilePath));
+        QVERIFY(file.open(QIODeviceBase::ReadOnly));
+        qmlLanguagePatternsContent = QString::fromUtf8(file.readAll());
+    }
+
+    const QList<QLspSpecification::Location> reactiveSignalUsages = {
+        locationFrom(qmlLanguagePatternsUri, qmlLanguagePatternsContent, 8, 12,
+                     static_cast<quint32>(strlen("fired"))),
+        locationFrom(qmlLanguagePatternsUri, qmlLanguagePatternsContent, 28, 9,
+                     static_cast<quint32>(strlen("fired"))),
+        locationFrom(qmlLanguagePatternsUri, qmlLanguagePatternsContent, 32, 9,
+                     static_cast<quint32>(strlen("fired"))),
+        locationFrom(qmlLanguagePatternsUri, qmlLanguagePatternsContent, 33, 9,
+                     static_cast<quint32>(strlen("fired"))),
+    };
+
+    QTest::addRow("reactiveSignalFromDefinition")
+            << qmlLanguagePatternsFilePath << QStringList{} << QStringList{} << 8 << 12
+            << reactiveSignalUsages;
+
+    const QList<QLspSpecification::Location> lazySourceComponentUsages = {
+        locationFrom(qmlLanguagePatternsUri, qmlLanguagePatternsContent, 10, 24,
+                     static_cast<quint32>(strlen("lazyComponent"))),
+        locationFrom(qmlLanguagePatternsUri, qmlLanguagePatternsContent, 37, 31,
+                     static_cast<quint32>(strlen("lazyComponent"))),
+    };
+
+    QTest::addRow("lazySourceComponentFromDefinition")
+            << qmlLanguagePatternsFilePath << QStringList{} << QStringList{} << 10 << 24
+            << lazySourceComponentUsages;
 }
 
 static bool locationsAreEqual(const QLspSpecification::Location &a,
@@ -1470,6 +1527,11 @@ void tst_qmlls_modules::warnings_data()
 
         QTest::addRow("ObjectBindingProperty")
                 << u"warnings/ObjectBindingProperty/Main.qml"_s << noWarningsExpected;
+    }
+    {
+        ExpectedWarnings noWarningsExpected;
+        QTest::addRow("QmlLanguagePatterns")
+                << u"qmlLanguagePatterns/Main.qml"_s << noWarningsExpected;
     }
 }
 
