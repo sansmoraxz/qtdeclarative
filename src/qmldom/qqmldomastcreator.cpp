@@ -473,9 +473,16 @@ bool QQmlDomAstCreator::visit(UiImport *el)
         if (loadDependencies) {
             const QString currentFileDir =
                     QFileInfo(qmlFile.canonicalFilePath()).dir().canonicalPath();
-            envPtr->loadFile(FileToLoad::fromFileSystem(
-                                     envPtr, import.uri.absoluteLocalPath(currentFileDir)),
+            const QString importDirectoryPath = import.uri.absoluteLocalPath(currentFileDir);
+            envPtr->loadFile(FileToLoad::fromFileSystem(envPtr, importDirectoryPath),
                              DomItem::Callback(), DomType::QmlDirectory);
+
+            const QDir importDirectory(importDirectoryPath);
+            if (importDirectory.exists(u"qmldir"_s)) {
+                envPtr->loadFile(FileToLoad::fromFileSystem(envPtr,
+                                                            importDirectory.filePath(u"qmldir"_s)),
+                                 DomItem::Callback(), DomType::QmldirFile);
+            }
         }
         FileLocations::addRegion(fileLocation, ImportUriRegion, el->fileNameToken);
     }

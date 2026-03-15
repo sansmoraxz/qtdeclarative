@@ -1045,6 +1045,28 @@ static QQmlJSMetaProperty refinePropertyWithObjectBinding(
     return property;
 }
 
+static QQmlJSScope::ConstPtr refinedObjectBindingType(QQmlJSRegisterContent type)
+{
+    if (!type.isProperty())
+        return {};
+
+    const QQmlJSRegisterContent owner = type.scope();
+    const QQmlJSScope::ConstPtr ownerScope = owner.containedType();
+    if (!ownerScope)
+        return {};
+
+    const QString propertyName = type.property().propertyName();
+    for (const QQmlJSMetaPropertyBinding &binding : ownerScope->propertyBindings(propertyName)) {
+        if (binding.bindingType() != QQmlSA::BindingType::Object)
+            continue;
+
+        if (const QQmlJSScope::ConstPtr objectType = binding.objectType())
+            return objectType;
+    }
+
+    return {};
+}
+
 QQmlJSScope::ConstPtr QQmlJSTypeResolver::resolveParentProperty(
         const QString &name, const QQmlJSScope::ConstPtr &base,
         const QQmlJSScope::ConstPtr &propType) const
@@ -1576,7 +1598,9 @@ QQmlJSRegisterContent QQmlJSTypeResolver::memberType(
         int resultLookupIndex) const
 {
     QQmlJSRegisterContent result;
-    const QQmlJSScope::ConstPtr contained = type.containedType();
+    QQmlJSScope::ConstPtr contained = type.containedType();
+    if (const QQmlJSScope::ConstPtr objectBindingType = refinedObjectBindingType(type))
+        contained = objectBindingType;
 
     // If we got a plain type reference we have to check the enums of the _scope_.
     if (contained == metaObjectType())

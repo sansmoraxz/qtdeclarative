@@ -727,18 +727,6 @@ static bool scopesMatch(const QQmlJSScope::ConstPtr &target, const QQmlJSScope::
     return targetPath == currentPath;
 }
 
-static bool locationsMatch(const Location &target, const Location &current)
-{
-    const QString targetPath = QFileInfo(target.filename()).canonicalFilePath();
-    const QString currentPath = QFileInfo(current.filename()).canonicalFilePath();
-    if (targetPath.isEmpty() || currentPath.isEmpty())
-        return target == current;
-
-    return targetPath == currentPath
-            && target.sourceLocation().begin() == current.sourceLocation().begin()
-            && target.sourceLocation().end() == current.sourceLocation().end();
-}
-
 static std::optional<Location> locationFromSingletonScope(const QQmlJSScope::ConstPtr &scope,
                                                           const DomItem &item)
 {
@@ -1329,20 +1317,6 @@ static void findUsagesOfNonJSIdentifiers(const DomItem &item, const QString &nam
     const auto expressionType = resolveExpressionType(item, ResolveOwnerType);
     if (!expressionType)
         return;
-    const std::optional<Location> targetDefinition = [item]() -> std::optional<Location> {
-        if (item.internalKind() != DomType::PropertyDefinition)
-            return std::nullopt;
-
-        const auto tree = FileLocations::treeOf(item);
-        if (!tree)
-            return std::nullopt;
-
-        const QQmlJS::SourceLocation identifierLocation = FileLocations::region(tree, IdentifierRegion);
-        if (!identifierLocation.isValid())
-            return std::nullopt;
-
-        return Location::tryFrom(item.canonicalFilePath(), identifierLocation, item);
-    }();
 
     // for Qml file components: add their filename as an usage for the renaming operation
     if (expressionType->type == QmlComponentIdentifier
@@ -1353,25 +1327,16 @@ static void findUsagesOfNonJSIdentifiers(const DomItem &item, const QString &nam
     const QStringList namesToCheck = namesOfPossibleUsages(name, item, expressionType->semanticScope);
 
     const auto addLocationIfTypeMatchesTarget =
-            [&result, &expressionType, &item, &targetDefinition](const DomItem &toBeResolved,
-                                                                 FileLocationRegion subRegion) {
-                bool matchesTarget = false;
-                if (targetDefinition.has_value()) {
-                    const auto currentDefinition = findDefinitionOf(toBeResolved);
-                    matchesTarget = currentDefinition.has_value()
-                            && locationsMatch(targetDefinition.value(), currentDefinition.value());
-                } else {
-                    const auto currentType =
-                            resolveExpressionType(toBeResolved, ResolveOptions::ResolveOwnerType);
-                    if (!currentType)
-                        return;
+            [&result, &expressionType, &item, &name](const DomItem &toBeResolved,
+                                                     FileLocationRegion subRegion) {
+                const auto currentType =
+                        resolveExpressionType(toBeResolved, ResolveOptions::ResolveOwnerType);
+                if (!currentType)
+                    return;
 
-                    const QQmlJSScope::ConstPtr target = expressionType->semanticScope;
-                    const QQmlJSScope::ConstPtr current = currentType->semanticScope;
-                    matchesTarget = scopesMatch(target, current);
-                }
-
-                if (matchesTarget) {
+                const QQmlJSScope::ConstPtr target = expressionType->semanticScope;
+                const QQmlJSScope::ConstPtr current = currentType->semanticScope;
+                if (scopesMatch(target, current)) {
                     auto tree = FileLocations::treeOf(toBeResolved);
                     QQmlJS::SourceLocation sourceLocation;
 
@@ -1652,7 +1617,7 @@ See comment on methodFromReferrerScope: the same applies to properties.
 */
 static std::optional<ExpressionType>
 propertyFromReferrerScope(const QQmlJSScope::ConstPtr &referrerScope, const QString &propertyName,
-                          ResolveOptions options)
+                          ResolveOptions options, bool refineObjectBinding = false)
 {
     for (QQmlJSScope::ConstPtr current = referrerScope; current; current = current->parentScope()) {
         const auto resolved = resolveNameInQmlScope(propertyName, current);
@@ -1666,12 +1631,14 @@ propertyFromReferrerScope(const QQmlJSScope::ConstPtr &referrerScope, const QStr
                                        findDefiningScopeForProperty(current, propertyName),
                                        resolved->type };
             case ResolveActualTypeForFieldMemberExpression: {
-                // Object-valued property bindings can refine the static declared type with an
-                // inline object scope that owns additional members.
-                for (const auto &binding : current->propertyBindings(resolved->name)) {
-                    if (binding.bindingType() == QQmlSA::BindingType::Object) {
-                        if (const auto objectType = binding.objectType())
-                            return ExpressionType{ propertyName, objectType, resolved->type };
+                // Field-member resolution may need the concrete inline object scope rather than
+                // the declared property type so chained member lookups can see extra members.
+                if (refineObjectBinding) {
+                    for (const auto &binding : current->propertyBindings(resolved->name)) {
+                        if (binding.bindingType() == QQmlSA::BindingType::Object) {
+                            if (const auto objectType = binding.objectType())
+                                return ExpressionType{ propertyName, objectType, resolved->type };
+                        }
                     }
                 }
                 return ExpressionType{ propertyName, property.type(), resolved->type };
@@ -1811,6 +1778,55 @@ static QQmlJSScope::ConstPtr findScopeOfSpecialItems(
 \internal
 \brief Distinguishes singleton types from attached types and "regular" qml components.
  */
+static bool scopeRepresentsSingletonType(const QQmlJSScope::ConstPtr &scope, const DomItem &item)
+{
+    if (!scope)
+        return false;
+    if (scope->isSingleton())
+        return true;
+
+    const QString filePath = resolvedScopeFilePath(scope, item);
+    if (filePath.isEmpty())
+        return false;
+
+    if (const DomItem file = item.goToFile(filePath)) {
+        const DomItem components = file.field(Fields::components);
+        for (int i = 0; i < components.indexes(); ++i) {
+            if (components[i].field(Fields::isSingleton).value().toBool(false))
+                return true;
+        }
+    }
+
+    const DomItem qmldirFiles = item.environment().field(Fields::qmldirFileWithPath);
+    for (const QString &qmldirPath : qmldirFiles.keys()) {
+        const DomItem qmldir = qmldirFiles.key(qmldirPath).field(Fields::currentItem);
+        const DomItem exports = qmldir.field(Fields::exports);
+        for (const QString &exportName : exports.keys()) {
+            const DomItem exportedEntries = exports.key(exportName);
+            for (int i = 0; i < exportedEntries.indexes(); ++i) {
+                const DomItem exportItem = exportedEntries.index(i);
+                if (!exportItem.field(Fields::isSingleton).value().toBool(false))
+                    continue;
+
+                QString exportPath;
+                if (const DomItem exportedType = exportItem.field(Fields::type).get())
+                    exportPath = exportedType.canonicalFilePath();
+                else if (const DomItem exportSource = exportItem.field(Fields::exportSource).get())
+                    exportPath = exportSource.canonicalFilePath();
+
+                if (exportPath.isEmpty())
+                    continue;
+
+                const QString canonicalExportPath = QFileInfo(exportPath).canonicalFilePath();
+                if ((canonicalExportPath.isEmpty() ? exportPath : canonicalExportPath) == filePath)
+                    return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 static std::optional<ExpressionType>
 resolveTypeName(const std::shared_ptr<QQmlJSTypeResolver> &resolver, const QString &name,
                 const DomItem &item, ResolveOptions options)
@@ -1819,7 +1835,7 @@ resolveTypeName(const std::shared_ptr<QQmlJSTypeResolver> &resolver, const QStri
     if (!scope)
         return {};
 
-    if (scope->isSingleton())
+    if (scopeRepresentsSingletonType(scope, item))
         return ExpressionType{ name, scope, IdentifierType::SingletonIdentifier };
 
     // A type not followed by a field member expression is just a type. Otherwise, it could either
@@ -1885,7 +1901,7 @@ static std::optional<ExpressionType> resolveFieldMemberExpressionType(const DomI
     if (auto scope = propertyBindingFromReferrerScope(owner->semanticScope, name, options, nullptr))
         return *scope;
 
-    if (auto scope = propertyFromReferrerScope(owner->semanticScope, name, options))
+    if (auto scope = propertyFromReferrerScope(owner->semanticScope, name, options, true))
         return *scope;
 
     // Singleton wrapper scopes can expose methods while the declared QML properties live on the
@@ -1895,7 +1911,7 @@ static std::optional<ExpressionType> resolveFieldMemberExpressionType(const DomI
             if (auto scope = propertyBindingFromReferrerScope(baseType, name, options, nullptr))
                 return *scope;
 
-            if (auto scope = propertyFromReferrerScope(baseType, name, options))
+            if (auto scope = propertyFromReferrerScope(baseType, name, options, true))
                 return *scope;
         }
     }

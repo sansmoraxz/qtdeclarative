@@ -8,6 +8,25 @@ QT_BEGIN_NAMESPACE
 
 using namespace Qt::StringLiterals;
 
+static bool hasConcreteObjectBinding(QQmlJSRegisterContent type)
+{
+    if (!type.isProperty())
+        return false;
+
+    const QQmlJSRegisterContent owner = type.scope();
+    const QQmlJSScope::ConstPtr ownerScope = owner.containedType();
+    if (!ownerScope)
+        return false;
+
+    const QString propertyName = type.property().propertyName();
+    for (const QQmlJSMetaPropertyBinding &binding : ownerScope->propertyBindings(propertyName)) {
+        if (binding.bindingType() == QQmlSA::BindingType::Object && binding.objectType())
+            return true;
+    }
+
+    return false;
+}
+
 /*!
  * \internal
  * \class QQmlJSShadowCheck
@@ -158,6 +177,9 @@ QQmlJSShadowCheck::Shadowability QQmlJSShadowCheck::checkShadowing(
         return NotShadowable;
 
     if (!baseType.containedType()->isReferenceType())
+        return NotShadowable;
+
+    if (hasConcreteObjectBinding(baseType))
         return NotShadowable;
 
     switch (baseType.variant()) {

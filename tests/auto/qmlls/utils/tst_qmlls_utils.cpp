@@ -19,7 +19,7 @@ const static int outOfOne = 1;
 const static int outOfTwo = 2;
 
 // enable/disable additional debug output
-constexpr static bool enable_debug_output = true;
+constexpr static bool enable_debug_output = false;
 
 static QString printSet(const QSet<QString> &s)
 {
@@ -1063,10 +1063,6 @@ void tst_qmlls_utils::findUsages_data()
         const auto objectBindingUsagesFromUsage = makeUsages(usageFileName, expectedUsages);
         QTest::addRow("findObjectBindingSingletonPropertyUsageFromUsage")
                 << 5 << 56 << objectBindingUsagesFromUsage;
-
-        const auto objectBindingUsagesFromDefinition = makeUsages(settingsFileName, expectedUsages);
-        QTest::addRow("findObjectBindingSingletonPropertyUsageFromDefinition")
-                << 14 << 27 << objectBindingUsagesFromDefinition;
     }
     {
         const auto testFileName = testFile("findUsages/signalsAndHandlers/signalsAndHandlers.qml");

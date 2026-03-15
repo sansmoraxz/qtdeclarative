@@ -572,6 +572,14 @@ void tst_qmlls_modules::goToDefinition_data()
     QTest::addRow("id") << JSDefinitionsQmlPath << 15 << 17 << JSDefinitionsQml << 7 << 9 << 7
                         << 9 + strlen("rootId");
 
+    const QString objectBindingMainPath = u"findUsages/ObjectBindingSingleton/Main.qml"_s;
+    const QByteArray objectBindingSettingsUri = testFileUrl(
+            u"findUsages/ObjectBindingSingleton/ObjectBindingSingletonModule/Settings.qml"_s)
+                                                       .toEncoded();
+    QTest::addRow("objectBindingSingletonProperty")
+            << objectBindingMainPath << 5 << 56 << objectBindingSettingsUri << 14 << 27 << 14
+            << 27 + strlen("enabled");
+
     QTest::addRow("comment") << JSDefinitionsQmlPath << 10 << 21 << noResultExpected << -1 << -1
                              << -1 << size_t{};
 }
@@ -746,6 +754,39 @@ void tst_qmlls_modules::findUsages_data()
             << QStringList{ mainFilePath }
             << QStringList{ testFile(u"findUsages/SingletonSymlinkedBuildDir/build"_s) }
             << 6 << 30 << singletonPropertyUsages;
+
+    const QString objectBindingMainFilePath = u"findUsages/ObjectBindingSingleton/Main.qml"_s;
+    const QString objectBindingSourceFilePath =
+            u"findUsages/ObjectBindingSingleton/ObjectBindingSingletonModule/Settings.qml"_s;
+    const QByteArray objectBindingMainUri = testFileUrl(objectBindingMainFilePath).toEncoded();
+    const QByteArray objectBindingSourceUri = testFileUrl(objectBindingSourceFilePath).toEncoded();
+
+    QString objectBindingMainContent;
+    {
+        QFile file(testFile(objectBindingMainFilePath));
+        QVERIFY(file.open(QIODeviceBase::ReadOnly));
+        objectBindingMainContent = QString::fromUtf8(file.readAll());
+    }
+
+    QString objectBindingSourceContent;
+    {
+        QFile file(testFile(objectBindingSourceFilePath));
+        QVERIFY(file.open(QIODeviceBase::ReadOnly));
+        objectBindingSourceContent = QString::fromUtf8(file.readAll());
+    }
+
+    const QList<QLspSpecification::Location> objectBindingPropertyUsages = {
+        locationFrom(objectBindingMainUri, objectBindingMainContent, 5, 56,
+                     static_cast<quint32>(strlen("enabled"))),
+        locationFrom(objectBindingSourceUri, objectBindingSourceContent, 14, 27,
+                     static_cast<quint32>(strlen("enabled"))),
+    };
+
+    QTest::addRow("objectBindingSingletonPropertyFromDefinition")
+            << objectBindingSourceFilePath
+            << QStringList{ objectBindingMainFilePath }
+            << QStringList{}
+            << 14 << 27 << objectBindingPropertyUsages;
 }
 
 static bool locationsAreEqual(const QLspSpecification::Location &a,
@@ -803,19 +844,19 @@ void tst_qmlls_modules::findUsages()
         }
         m_protocol->typedRpc()->sendNotification(QByteArray(Notifications::AddBuildDirsMethod),
                                                  bDirs);
+    }
 
-        for (const auto &[openedUri, openedFile] : openedFiles) {
-            DidChangeTextDocumentParams didChange;
-            didChange.textDocument.uri = openedUri;
-            didChange.textDocument.version = 2;
-            TextDocumentContentChangeEvent change;
-            QFile file(testFile(openedFile));
-            QVERIFY(file.open(QIODeviceBase::ReadOnly));
-            change.range = std::nullopt;
-            change.text = file.readAll();
-            didChange.contentChanges.append(change);
-            m_protocol->notifyDidChangeTextDocument(didChange);
-        }
+    for (const auto &[openedUri, openedFile] : openedFiles) {
+        DidChangeTextDocumentParams didChange;
+        didChange.textDocument.uri = openedUri;
+        didChange.textDocument.version = 2;
+        TextDocumentContentChangeEvent change;
+        QFile file(testFile(openedFile));
+        QVERIFY(file.open(QIODeviceBase::ReadOnly));
+        change.range = std::nullopt;
+        change.text = file.readAll();
+        didChange.contentChanges.append(change);
+        m_protocol->notifyDidChangeTextDocument(didChange);
     }
 
     const auto uri = openFile(filePath);
