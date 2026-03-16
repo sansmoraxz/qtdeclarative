@@ -35,6 +35,22 @@ static QString markdownCodeBlock(const QString &code)
     return u"```qml\n%1\n```"_s.arg(code);
 }
 
+static QByteArray prependSignatureToDocumentation(const std::optional<QByteArray> &signature,
+                                                  const std::optional<QByteArray> &documentation)
+{
+    if (!signature)
+        return documentation.value_or(QByteArray{});
+    if (!documentation)
+        return *signature;
+
+    QByteArray result = *signature;
+    if (!result.endsWith('\n'))
+        result.append('\n');
+    result.append('\n');
+    result.append(*documentation);
+    return result;
+}
+
 static bool scopeDefinedInQmltypes(const QQmlJSScope::ConstPtr &scope)
 {
     return !scope.isNull() && scope->filePath().endsWith(u".qmltypes"_s);
@@ -199,12 +215,13 @@ HelpManager::extractDocumentationForIdentifiers(const DomItem &item,
     case QQmlLSUtils::JavaScriptIdentifier:
     case QQmlLSUtils::GroupedPropertyIdentifier:
     case QQmlLSUtils::PropertyIdentifier: {
+        const auto sourceDocumentation = sourceDocumentationForPropertyIdentifier(expr);
         if (!links.empty()) {
             ExtractDocumentation extractor(DomType::PropertyDefinition);
             if (const auto extracted = tryExtract(extractor, links, expr.name.value()))
-                return extracted;
+                return prependSignatureToDocumentation(sourceDocumentation, extracted);
         }
-        return sourceDocumentationForPropertyIdentifier(expr);
+        return sourceDocumentation;
     }
     case QQmlLSUtils::PropertyChangedSignalIdentifier:
     case QQmlLSUtils::PropertyChangedHandlerIdentifier: {
@@ -215,12 +232,13 @@ HelpManager::extractDocumentationForIdentifiers(const DomItem &item,
     case QQmlLSUtils::SignalIdentifier:
     case QQmlLSUtils::SignalHandlerIdentifier:
     case QQmlLSUtils::MethodIdentifier: {
+        const auto sourceDocumentation = sourceDocumentationForMethodIdentifier(item, expr);
         if (!links.empty()) {
             ExtractDocumentation extractor(DomType::MethodInfo);
             if (const auto extracted = tryExtract(extractor, links, expr.name.value()))
-                return extracted;
+                return prependSignatureToDocumentation(sourceDocumentation, extracted);
         }
-        return sourceDocumentationForMethodIdentifier(item, expr);
+        return sourceDocumentation;
     }
     case QQmlLSUtils::SingletonIdentifier:
     case QQmlLSUtils::AttachedTypeIdentifier:
@@ -283,16 +301,17 @@ std::optional<QByteArray> HelpManager::extractDocumentationForDomElements(const 
         return std::nullopt;
     }
 
+    const auto sourceDocumentation =
+            item.internalKind() == DomType::MethodInfo ? sourceDocumentationForMethod(item)
+                                                       : std::nullopt;
+
     if (!links.empty()) {
         ExtractDocumentation extractor(item.internalKind());
         if (const auto extracted = tryExtract(extractor, links, name))
-            return extracted;
+            return prependSignatureToDocumentation(sourceDocumentation, extracted);
     }
 
-    if (item.internalKind() == DomType::MethodInfo)
-        return sourceDocumentationForMethod(item);
-
-    return std::nullopt;
+    return sourceDocumentation;
 }
 
 std::optional<QByteArray>
