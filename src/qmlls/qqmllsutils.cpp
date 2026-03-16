@@ -812,6 +812,27 @@ static QString sourceFilePathFromModuleExport(const DomItem &exportItem)
     return {};
 }
 
+static bool moduleExportMatchesScope(const DomItem &exportItem,
+                                     const QQmlJSScope::ConstPtr &scope)
+{
+    if (!exportItem || exportItem.internalKind() != DomType::Export || !scope)
+        return false;
+
+    const QString internalName = scope->internalName();
+    if (internalName.isEmpty())
+        return false;
+
+    const DomItem typeDefinition = exportItem.field(Fields::type).get();
+    if (!typeDefinition)
+        return false;
+
+    const auto matchesInternalName = [&](const DomItem &candidate) {
+        return candidate && candidate.field(Fields::name).value().toString() == internalName;
+    };
+
+    return matchesInternalName(typeDefinition) || matchesInternalName(typeDefinition.component());
+}
+
 static QString moduleExportSourceFilePath(const DomItem &item, const QString &moduleName,
                                           const QString &typeName)
 {
@@ -834,6 +855,71 @@ static QString moduleExportSourceFilePath(const DomItem &item, const QString &mo
         for (const DomItem &exportItem : exports) {
             if (const QString path = sourceFilePathFromModuleExport(exportItem); !path.isEmpty())
                 return path;
+        }
+
+        return {};
+    };
+
+    bool matchedImport = false;
+    const DomItem imports = item.fileObject().field(Fields::imports);
+    for (int i = 0; i < imports.indexes(); ++i) {
+        const auto import = imports[i].as<Import>();
+        if (!import || import->uri.isDirectory() || import->uri.moduleUri() != moduleName)
+            continue;
+
+        matchedImport = true;
+        const int majorVersion = import->version.majorVersion < 0 ? Version::Latest
+                                                                  : import->version.majorVersion;
+        const int minorVersion = import->version.minorVersion < 0 ? Version::Latest
+                                                                  : import->version.minorVersion;
+        if (const QString path = tryModuleVersion(majorVersion, minorVersion); !path.isEmpty())
+            return path;
+    }
+
+    if (!matchedImport)
+        return {};
+
+    return tryModuleVersion(Version::Latest, Version::Latest);
+}
+
+static QString moduleExportSourceFilePath(const DomItem &item, const QQmlJSScope::ConstPtr &scope)
+{
+    if (!scope)
+        return {};
+
+    if (const QString path =
+                moduleExportSourceFilePath(item, scope->moduleName(), scope->internalName());
+        !path.isEmpty()) {
+        return path;
+    }
+
+    const QString moduleName = scope->moduleName();
+    if (moduleName.isEmpty())
+        return {};
+
+    const auto env = item.environment().ownerAs<DomEnvironment>();
+    if (!env)
+        return {};
+
+    const auto tryModuleVersion = [&](int majorVersion, int minorVersion) -> QString {
+        const auto moduleIndex =
+                env->moduleIndexWithUri(item.environment(), moduleName, majorVersion, EnvLookup::Normal);
+        if (!moduleIndex)
+            return {};
+
+        const DomItem moduleIndexItem = item.environment().copy(moduleIndex);
+        for (const QString &exportName : moduleIndex->exportNames(moduleIndexItem)) {
+            const auto exports = moduleIndex->exportsWithNameAndMinorVersion(moduleIndexItem,
+                                                                             exportName,
+                                                                             minorVersion);
+            for (const DomItem &exportItem : exports) {
+                if (!moduleExportMatchesScope(exportItem, scope))
+                    continue;
+
+                if (const QString path = sourceFilePathFromModuleExport(exportItem); !path.isEmpty()) {
+                    return path;
+                }
+            }
         }
 
         return {};
@@ -2516,7 +2602,7 @@ static std::optional<Location> locationFromMetaMethod(const QQmlJSScope::ConstPt
 
     QString filePath = resolvedScopeFilePath(scope, item);
     if (filePath.isEmpty())
-        filePath = moduleExportSourceFilePath(item, scope->moduleName(), scope->internalName());
+        filePath = moduleExportSourceFilePath(item, scope);
     if (filePath.isEmpty())
         return {};
 
@@ -2570,7 +2656,7 @@ static std::optional<Location> locationFromMetaProperty(const QQmlJSScope::Const
 
     QString filePath = resolvedScopeFilePath(scope, item);
     if (filePath.isEmpty())
-        filePath = moduleExportSourceFilePath(item, scope->moduleName(), scope->internalName());
+        filePath = moduleExportSourceFilePath(item, scope);
     if (filePath.isEmpty())
         return {};
 

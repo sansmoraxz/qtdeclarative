@@ -2225,6 +2225,9 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         const QString qmltypesSingletonUsages =
                 testFile(u"findDefinition/QmltypesSingletonUsages.qml"_s);
         const QString qmltypesFile = testFile(u"QmltypesSingletonModule/types.qmltypes"_s);
+        QTest::addRow("qmltypesSingletonMethodFromModule")
+                << qmltypesSingletonUsages << 5 << 42 << qmltypesFile << 27 << 20 << strlen("env")
+                << noExtraBuildDir;
         QTest::addRow("qmltypesSingletonPropertyFromModule")
                 << qmltypesSingletonUsages << 6 << 51 << qmltypesFile << 13 << 20
                 << strlen("version") << noExtraBuildDir;
@@ -2234,6 +2237,16 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         QTest::addRow("qmltypesSingletonSignalFromModule")
                 << qmltypesSingletonUsages << 8 << 47 << qmltypesFile << 22 << 20
                 << strlen("reloadFailed") << noExtraBuildDir;
+    }
+
+    {
+        const QString qmltypesAliasedSingletonUsages =
+                testFile(u"findDefinition/QmltypesAliasedSingletonUsages.qml"_s);
+        const QString qmltypesAliasedSingletonFile =
+                testFile(u"QmltypesAliasedSingletonModule/types.qmltypes"_s);
+        QTest::addRow("qmltypesAliasedSingletonMethodFromModule")
+                << qmltypesAliasedSingletonUsages << 5 << 52 << qmltypesAliasedSingletonFile << 14
+                << 20 << strlen("env") << noExtraBuildDir;
     }
 }
 
@@ -2310,6 +2323,11 @@ void tst_qmlls_utils::findDefinitionFileFromLocation_data()
     QTest::addRow("qmltypesSingletonSignalFromModule")
             << qmltypesSingletonUsages << 8 << 47
             << u"/QmltypesSingletonModule/types.qmltypes"_s;
+    const QString qmltypesAliasedSingletonUsages =
+            testFile(u"findDefinition/QmltypesAliasedSingletonUsages.qml"_s);
+    QTest::addRow("qmltypesAliasedSingletonMethodFromModule")
+            << qmltypesAliasedSingletonUsages << 5 << 52
+            << u"/QmltypesAliasedSingletonModule/types.qmltypes"_s;
 }
 
 void tst_qmlls_utils::findDefinitionFileFromLocation()
@@ -2353,6 +2371,10 @@ void tst_qmlls_utils::hoverDocumentation_data()
             QByteArrayLiteral("```qml\nenv(variable: QString): QString\n```");
     QTest::addRow("qmltypesSingletonMethodFromModule")
             << qmltypesSingletonUsages << 5 << 42 << qmltypesExpected << QStringList{};
+    const QString qmltypesAliasedSingletonUsages =
+            testFile(u"findDefinition/QmltypesAliasedSingletonUsages.qml"_s);
+    QTest::addRow("qmltypesAliasedSingletonMethodFromModule")
+            << qmltypesAliasedSingletonUsages << 5 << 52 << qmltypesExpected << QStringList{};
     QTest::addRow("qmltypesSingletonPropertyFromModule")
             << qmltypesSingletonUsages << 6 << 51
             << QByteArrayLiteral("```qml\nreadonly property QString version\n```")

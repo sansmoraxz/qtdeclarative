@@ -1,0 +1,20 @@
+import QtQuick.tooling 1.2
+
+Module {
+    Component {
+        file: "private/aliasedsingleton_p.h"
+        lineNumber: 4
+        name: "AliasedSingletonPrivate"
+        accessSemantics: "reference"
+        prototype: "QObject"
+        exports: ["QmltypesAliasedSingletonModule/AliasedSingleton 1.0"]
+        isCreatable: false
+        isSingleton: true
+        Method {
+            name: "env"
+            type: "QString"
+            lineNumber: 13
+            Parameter { name: "variable"; type: "QString" }
+        }
+    }
+}
