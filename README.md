@@ -26,3 +26,9 @@ In addition, there are several Qt Labs modules:
 - [Qt Labs Settings](https://doc.qt.io/qt-6/qml-qt-labs-settings-settings.html)
 - [Qt Labs Shared Image Provider](https://doc.qt.io/qt-6/qt-labs-sharedimage-qmlmodule.html)
 - [Qt Labs WavefrontMesh](https://doc.qt.io/qt-6/qt-labs-wavefrontmesh-qmlmodule.html)
+
+QML Language Server Notes
+-------------------------
+
+For distributions that ship `qmlls` and `.qch` docs but do not install QtTools'
+`help/libhelpplugin.so`, see [tools/qmlls/README.md](tools/qmlls/README.md).
