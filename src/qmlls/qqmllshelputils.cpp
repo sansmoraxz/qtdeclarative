@@ -147,6 +147,24 @@ static std::optional<QString> propertyNameFromExpression(const QQmlLSUtils::Expr
     }
 }
 
+static std::optional<QByteArray> sourceDocumentationForProperty(const DomItem &propertyItem)
+{
+    const auto name = propertyItem.field(Fields::name).value().toString();
+    if (name.isEmpty())
+        return std::nullopt;
+
+    const auto definingScope =
+            QQmlLSUtils::findDefiningScopeForProperty(propertyItem.nearestSemanticScope(), name);
+    if (!definingScope)
+        return std::nullopt;
+
+    const auto property = definingScope->property(name);
+    if (!property.isValid())
+        return std::nullopt;
+
+    return markdownCodeBlock(metaPropertySignature(property)).toUtf8();
+}
+
 HelpManager::HelpManager()
 {
     const QFactoryLoader pluginLoader(QQmlLSHelpPluginInterface_iid, u"/help"_s);
@@ -272,12 +290,20 @@ std::optional<QByteArray> HelpManager::extractDocumentationForDomElements(const 
 
     const auto name = item.field(Fields::name).value().toString();
     std::vector<QQmlLSHelpProviderBase::DocumentLink> links;
+    const auto sourceDocumentation = item.internalKind() == DomType::MethodInfo
+            ? sourceDocumentationForMethod(item)
+            : item.internalKind() == DomType::PropertyDefinition
+            ? sourceDocumentationForProperty(item)
+            : std::nullopt;
+
     switch (item.internalKind()) {
     case DomType::QmlObject: {
         links = collectDocumentationLinks(item, item.nearestSemanticScope(), name);
         break;
     }
     case DomType::PropertyDefinition: {
+        if (!qmlFile->canonicalFilePath().endsWith(u".qmltypes"_s))
+            return sourceDocumentation;
         links = collectDocumentationLinks(
                 item, QQmlLSUtils::findDefiningScopeForProperty(item.nearestSemanticScope(), name),
                 name);
@@ -300,10 +326,6 @@ std::optional<QByteArray> HelpManager::extractDocumentationForDomElements(const 
                 << item.internalKindStr() << "was not implemented for documentation extraction";
         return std::nullopt;
     }
-
-    const auto sourceDocumentation =
-            item.internalKind() == DomType::MethodInfo ? sourceDocumentationForMethod(item)
-                                                       : std::nullopt;
 
     if (!links.empty()) {
         ExtractDocumentation extractor(item.internalKind());
