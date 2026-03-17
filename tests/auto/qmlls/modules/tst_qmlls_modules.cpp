@@ -576,6 +576,17 @@ void tst_qmlls_modules::goToDefinition_data()
     const QByteArray objectBindingSettingsUri = testFileUrl(
             u"findUsages/ObjectBindingSingleton/ObjectBindingSingletonModule/Settings.qml"_s)
                                                        .toEncoded();
+    const QByteArray objectBindingQmldirUri = testFileUrl(
+            u"findUsages/ObjectBindingSingleton/ObjectBindingSingletonModule/qmldir"_s)
+                                                     .toEncoded();
+    const QByteArray qtQuickQmldirUri = QUrl::fromLocalFile(
+            QLibraryInfo::path(QLibraryInfo::QmlImportsPath) + u"/QtQuick/qmldir"_s)
+                                                .toEncoded();
+    QTest::addRow("moduleImport")
+            << objectBindingMainPath << 1 << 10 << qtQuickQmldirUri << 1 << 1 << 1 << size_t(1);
+    QTest::addRow("directoryImport")
+            << objectBindingMainPath << 2 << 12 << objectBindingQmldirUri << 1 << 1 << 1
+            << size_t(1);
     QTest::addRow("objectBindingSingletonProperty")
             << objectBindingMainPath << 5 << 56 << objectBindingSettingsUri << 14 << 27 << 14
             << 27 + strlen("enabled");

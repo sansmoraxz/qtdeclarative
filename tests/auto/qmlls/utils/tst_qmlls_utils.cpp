@@ -2060,8 +2060,14 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
     {
         const QString definitionFile =
                 testFile(u"findDefinition/MyApplicationWindowModule/MyApplicationWindow.qml"_s);
+        const QString definitionQmldir =
+                testFile(u"findDefinition/MyApplicationWindowModule/qmldir"_s);
         const QString qmlComponents = testFile(u"findDefinition/QmlComponents.qml"_s);
-        const QString qualifiedQmlComponents = testFile(u"findDefinition/QualifiedQmlComponents.qml"_s);
+        const QString qualifiedQmlComponents =
+                testFile(u"findDefinition/QualifiedQmlComponents.qml"_s);
+        QTest::addRow("moduleImport")
+                << qmlComponents << 5 << 12 << definitionQmldir << 1 << 1 << size_t(0)
+                << noExtraBuildDir;
         QTest::addRow("component") << qmlComponents << 7 << 11 << definitionFile << 7 << 1
                                    << strlen("ApplicationWindow") << noExtraBuildDir;
         QTest::addRow("attachedType") << qmlComponents << 9 << 42 << definitionFile << 7 << 1
@@ -2071,6 +2077,9 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
         QTest::addRow("enumName") << qmlComponents << 11 << 42 << definitionFile << 7 << 1
                                   << strlen("ApplicationWindow") << noExtraBuildDir;
 
+        QTest::addRow("qualifiedModuleImport")
+                << qualifiedQmlComponents << 5 << 12 << definitionQmldir << 1 << 1 << size_t(0)
+                << noExtraBuildDir;
         QTest::addRow("qualifiedComponent") << qualifiedQmlComponents << 7 << 11 << definitionFile
                                             << 7 << 1 << strlen("ApplicationWindow") << noExtraBuildDir;
         QTest::addRow("qualifiedAttachedType")
@@ -2196,6 +2205,9 @@ void tst_qmlls_utils::findDefinitionFromLocation_data()
     {
         const QString jsInteropQml = testFile(u"highlights/jsInterop.qml"_s);
         const QString helperJs = testFile(u"highlights/Helper.js"_s);
+        QTest::addRow("jsImportedFile")
+                << jsInteropQml << 2 << 12 << helperJs << 1 << 1 << size_t(0)
+                << noExtraBuildDir;
         QTest::addRow("jsImportedMethod")
                 << jsInteropQml << 6 << 31 << helperJs << 1 << 10 << strlen("answer")
                 << noExtraBuildDir;
@@ -2309,6 +2321,14 @@ void tst_qmlls_utils::findDefinitionFileFromLocation_data()
     QTest::addRow("singletonFromPluginMetadata")
             << file << 78 << 33 << u"/QtCore/plugins.qmltypes"_s;
 
+    const QString qmlComponents = testFile(u"findDefinition/QmlComponents.qml"_s);
+    QTest::addRow("moduleImport")
+            << qmlComponents << 5 << 12 << u"/findDefinition/MyApplicationWindowModule/qmldir"_s;
+    const QString qualifiedQmlComponents = testFile(u"findDefinition/QualifiedQmlComponents.qml"_s);
+    QTest::addRow("qualifiedModuleImport")
+            << qualifiedQmlComponents << 5 << 12
+            << u"/findDefinition/MyApplicationWindowModule/qmldir"_s;
+
     const QString qmltypesSingletonUsages =
             testFile(u"findDefinition/QmltypesSingletonUsages.qml"_s);
     QTest::addRow("qmltypesSingletonMethodFromModule")
@@ -2328,6 +2348,10 @@ void tst_qmlls_utils::findDefinitionFileFromLocation_data()
     QTest::addRow("qmltypesAliasedSingletonMethodFromModule")
             << qmltypesAliasedSingletonUsages << 5 << 52
             << u"/QmltypesAliasedSingletonModule/types.qmltypes"_s;
+
+    const QString jsInteropQml = testFile(u"highlights/jsInterop.qml"_s);
+    QTest::addRow("jsImportedFile")
+            << jsInteropQml << 2 << 12 << u"/highlights/Helper.js"_s;
 }
 
 void tst_qmlls_utils::findDefinitionFileFromLocation()

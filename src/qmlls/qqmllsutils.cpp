@@ -41,18 +41,81 @@ static std::optional<Location> locationAtStartOfFile(const QString &fileName)
     return Location::from(fileName, QString::fromUtf8(file.readAll()), 1, 1, 0);
 }
 
-static std::optional<Location> importDefinitionLocation(const DomItem &importItem)
+static DomItem importDomItemFrom(const DomItem &item)
+{
+    if (item.internalKind() == DomType::Import)
+        return item;
+    if (item.directParent().internalKind() == DomType::Import)
+        return item.directParent();
+    return {};
+}
+
+static QString localImportPath(const DomItem &importItem)
 {
     const auto import = importItem.as<Import>();
     if (!import || !import->uri.isDirectory())
         return {};
 
     const QString importingDirectory = QFileInfo(importItem.canonicalFilePath()).absolutePath();
-    const QFileInfo importInfo(import->uri.absoluteLocalPath(importingDirectory));
+    return import->uri.absoluteLocalPath(importingDirectory);
+}
+
+static std::optional<Location> fileImportDefinitionLocation(const DomItem &importItem)
+{
+    const QFileInfo importInfo(localImportPath(importItem));
     if (!importInfo.isFile())
         return {};
 
     return locationAtStartOfFile(importInfo.canonicalFilePath());
+}
+
+static std::optional<Location> localImportDefinitionLocation(const DomItem &importItem)
+{
+    const QFileInfo importInfo(localImportPath(importItem));
+    if (!importInfo.exists())
+        return {};
+
+    if (importInfo.isFile())
+        return locationAtStartOfFile(importInfo.canonicalFilePath());
+
+    const QString canonicalPath = importInfo.canonicalFilePath();
+    return locationAtStartOfFile((canonicalPath.isEmpty() ? importInfo.filePath() : canonicalPath)
+                                 + u"/qmldir"_s);
+}
+
+static std::optional<Location> findImportDefinitionOf(const DomItem &item)
+{
+    const DomItem importItem = importDomItemFrom(item);
+    if (!importItem)
+        return {};
+
+    if (const auto localImportLocation = localImportDefinitionLocation(importItem))
+        return localImportLocation;
+
+    const auto import = importItem.as<Import>();
+    if (!import || import->uri.isDirectory())
+        return {};
+
+    const auto env = importItem.environment().ownerAs<DomEnvironment>();
+    if (!env)
+        return {};
+
+    const auto moduleIndex = env->moduleIndexWithUri(importItem.environment(), import->uri.moduleUri(),
+                                                     import->version.majorVersion,
+                                                     EnvLookup::Normal);
+    if (!moduleIndex)
+        return {};
+
+    for (const auto &qmldirPath : moduleIndex->qmldirPaths()) {
+        const DomItem qmldirFile = importItem.environment().path(qmldirPath);
+        const QString fileName = qmldirFile.canonicalFilePath();
+        if (fileName.isEmpty())
+            continue;
+        if (const auto location = locationAtStartOfFile(fileName))
+            return location;
+    }
+
+    return {};
 }
 
 static std::optional<Location> findFileImportDefinitionOf(const DomItem &item, const QString &name,
@@ -71,7 +134,7 @@ static std::optional<Location> findFileImportDefinitionOf(const DomItem &item, c
         if (region == fileLocations->info().regions.constEnd() || *region != location)
             continue;
 
-        if (const auto importedFileLocation = importDefinitionLocation(imports[i]))
+        if (const auto importedFileLocation = fileImportDefinitionLocation(imports[i]))
             return importedFileLocation;
     }
 
@@ -2676,6 +2739,9 @@ static std::optional<Location> locationFromMetaProperty(const QQmlJSScope::Const
 
 std::optional<Location> findDefinitionOf(const DomItem &item)
 {
+    if (const auto importLocation = findImportDefinitionOf(item))
+        return importLocation;
+
     if (item.internalKind() == DomType::ScriptIdentifierExpression
         && item.directParent().internalKind() == DomType::ScriptBinaryExpression) {
         const DomItem parent = item.directParent();
@@ -2825,14 +2891,15 @@ std::optional<Location> findDefinitionOf(const DomItem &item)
         const DomItem imports = item.fileObject().field(Fields::imports);
         for (int i = 0; i < imports.indexes(); ++i) {
             if (imports[i][Fields::importId].value().toString() == resolvedExpression->name) {
-                if (const auto importLocation = importDefinitionLocation(imports[i]))
+                if (const auto importLocation = fileImportDefinitionLocation(imports[i]))
                     return importLocation;
 
                 const auto fileLocations = FileLocations::treeOf(imports[i]);
                 if (!fileLocations)
                     continue;
 
-                return Location::tryFrom(item.canonicalFilePath(), fileLocations->info().regions[IdNameRegion], item);
+                return Location::tryFrom(item.canonicalFilePath(),
+                                         fileLocations->info().regions[IdNameRegion], item);
             }
         }
         return {};
